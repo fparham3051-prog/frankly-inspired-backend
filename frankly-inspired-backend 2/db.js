@@ -20,9 +20,22 @@ let ready = null;
 
 if (DATABASE_URL) {
   const { Pool } = require('pg');
+  // This Postgres instance requires SSL on every connection (confirmed:
+  // connecting without it returns "FATAL: SSL/TLS required"), so this
+  // stays on unconditionally. connectionTimeoutMillis/query_timeout make
+  // sure a bad connection fails fast with a logged error instead of
+  // hanging a request forever.
   pool = new Pool({
     connectionString: DATABASE_URL,
     ssl: { rejectUnauthorized: false },
+    connectionTimeoutMillis: 8000,
+    query_timeout: 8000,
+  });
+  // Without this handler, an error on an idle pooled connection is an
+  // uncaught exception that crashes the entire Node process — this is a
+  // documented pg gotcha, not a hypothetical.
+  pool.on('error', (err) => {
+    console.error('Unexpected error on idle PG client:', err.message);
   });
 
   ready = pool.query(`
