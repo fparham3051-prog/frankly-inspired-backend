@@ -24,6 +24,7 @@ const {
   assessmentLeadNotificationEmail,
 } = require('./emailTemplates');
 const { generateAssessmentNarrative } = require('./aiNarrative');
+const { logAssessmentResponse, getBenchmarks } = require('./db');
 
 const PORT = process.env.PORT || 3000;
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
@@ -185,10 +186,30 @@ app.post('/api/assessment-narrative', async (req, res) => {
     pillarScores: body.pillarScores,
   });
 
+  // Anonymized log for the benchmark dataset — no email, no org, just the
+  // scores. Fire-and-forget: never awaited into the response, never a
+  // reason for this endpoint to fail.
+  logAssessmentResponse({
+    scorePct: body.scorePct,
+    band: typeof body.band === 'string' ? body.band : '',
+    pillarScores: body.pillarScores,
+  });
+
   // narrative is null on any failure (missing key, API error, timeout) —
   // the frontend already has a static fallback description for this case,
   // so we return ok:true either way and just omit narrative when absent.
   return res.json({ ok: true, narrative });
+});
+
+/* ------------------------------------------------------------------ */
+/* GET /api/benchmarks                                                 */
+/* Aggregate stats across every logged assessment response so far.     */
+/* Returns null fields if persistence isn't configured or nothing has   */
+/* been logged yet — never errors, since this is informational only.   */
+/* ------------------------------------------------------------------ */
+app.get('/api/benchmarks', async (req, res) => {
+  const benchmarks = await getBenchmarks();
+  res.json({ ok: true, benchmarks });
 });
 
 function isValidEmail(value) {
