@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js">
+<head>
+  <meta charset="UTF-8">
+  <script>document.documentElement.classList.replace('no-js', 'js');</script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nonprofit Sustainability Self-Assessment | Frankly Inspired</title>
+  <meta name="description" content="A free, 15-question self-assessment to help nonprofit leaders gauge their organization's sustainability across strategy, revenue, leadership, operations, and partnerships.">
+
+  <!-- This tool is live and linked from the main nav, the footer, and the
+       pricing section's callout on index.html. Scoring runs entirely in the
+       browser (no data leaves the page) except two backend calls: an
+       anonymized score log + AI narrative request on completion, and the
+       optional "email me my results" capture at the end. Both post to
+       API_BASE at the top of js/assessment.js — see
+       frankly-inspired-backend/README.md for the deployed service details. -->
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+  <a class="skip-link" href="#main">Skip to main content</a>
+
+  <header class="site-header">
+    <div class="nav-wrap">
+      <a href="index.html" class="brand"><img src="assets/images/logo-mark.svg" alt="" class="brand-mark" width="28" height="40">Frankly Inspired</a>
+      <div class="nav-actions">
+        <a class="btn btn-primary btn-nav-mobile" href="https://calendly.com/fparham/30min" target="_blank" rel="noopener">Schedule</a>
+        <nav class="site-nav" aria-label="Primary">
+          <ul class="nav-menu" style="display:flex;">
+            <li><a href="index.html">Back to Site</a></li>
+            <li><a class="btn btn-primary btn-nav" href="https://calendly.com/fparham/30min" target="_blank" rel="noopener">Schedule a Conversation</a></li>
+          </ul>
+        </nav>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+
+    <!-- ============ INTRO ============ -->
+    <section class="section assessment-intro">
+      <div class="container narrow center">
+        <p class="eyebrow eyebrow-dark">Free Tool</p>
+        <h1>Nonprofit Sustainability Self-Assessment</h1>
+        <p class="hero-sub-light">15 quick questions across the five areas that determine whether an organization is built to last: strategy, revenue, leadership, operations, and partnerships. Takes about 5 minutes. Your answers stay in your browser unless you choose to email yourself the results.</p>
+      </div>
+    </section>
+
+    <!-- ============ ASSESSMENT FORM ============ -->
+    <section class="section assessment-form-section alt-bg">
+      <div class="container narrow">
+
+        <!-- Sticky progress indicator, kept in sync with which pillar-group
+             is in view — see js/assessment.js. Hidden automatically once
+             results are shown (no form left to track progress through). -->
+        <div class="assessment-progress" id="assessment-progress">
+          <p class="assessment-progress-label" id="assessment-progress-label">Section 1 of 5 — Sustainability Strategy</p>
+          <span class="assessment-progress-track"><span class="assessment-progress-fill" id="assessment-progress-fill"></span></span>
+        </div>
+
+        <form id="assessment-form" novalidate>
+
+          <div class="pillar-group" data-pillar-index="1">
+            <h2 class="pillar-heading">1. Sustainability Strategy</h2>
+            <fieldset class="likert">
+              <legend>Our organization has a clear, written strategic plan that guides major decisions.</legend>
+              <div class="likert-scale">
+                <label><input type="radio" name="p1q1" value="1" required><span>1</span><small>Not at all true</small></label>
+                <label><input type="radio" name="p1q1" value="2"><span>2</span><small>Rarely true</small></label>
+                <label><input type="radio" name="p1q1" value="3"><span>3</span><small>Somewhat true</small></label>
+                <label><input type="radio" name="p1q1" value="4"><span>4</span><small>Mostly true</small></label>
+                <label><input type="radio" name="p1q1" value="5"><span>5</span><small>Very true</small></label>
+              </div>
+            </fieldset>
+            <fieldset class="likert">
+              <legend>Leadership regularly reviews organizational risks and has a plan to address them.</legend>
+              <div class="likert-scale">
+                <label><input type="radio" name="p1q2" value="1" required><span>1</span><small>Not at all true</small></label>
+                <label><input type="radio" name="p1q2" value="2"><span>2</span><small>Rarely true</small></label>
+                <label><input type="radio" name="p1q2" value="3"><span>3</span><small>Somewhat true</small></label>
+                <label><input type="radio" name="p1q2" value="4"><span>4</span><small>Mostly true</small></label>
+                <label><input type="radio" name="p1q2" value="5"><span>5</span><small>Very true</small></label>
+              </div>
+            </fieldset>
+            <fieldset class="likert">
+              <legend>We have a defined sustainability roadmap for the next 1-3 years.</legend>
+              <div class="likert-scale">
+                <label><input type="radio" name="p1q3" value="1" required><span>1</span><small>Not at all true</small></label>
+                <label><input type="radio" name="p1q3" value="2"><span>2</span><small>Rarely true</small></label>
+                <label><input type="radio" name="p1q3" value="3"><span>3</span><small>Somewhat true</small></label>
+                <label><input type="radio" name="p1q3" value="4"><span>4</span><small>Mostly true</small></label>
+                <label><input type="radio" name="p1q3" value="5"><span>5</span><small>Very true</small></label>
+              </div>
+            </fieldset>
+          </div>
+
+          <div class="pillar-group" data-pillar-index="2">
+            <h2 class="pillar-heading">2. Revenue Diversification</h2>
+            <fieldset class="likert">
+              <legend>Our revenue comes from more than one major source, so no single grant or donor makes up most of our budget.</legend>
+              <div class="likert-scale">
+                <label><input type="radio" name="p2q1" value="1" required><span>1</span><small>Not at all true</small></label>
+                <label><input type="radio" name="p2q1" value="2"><span>2</span><small>Rarely true</small></label>
+                <label><input type="radio" name="p2q1" value="3"><span>3</span><small>Somewhat true</small></label>
+                <label><input type="radio" name="p2q1" value="4"><span>4</span><small>Mostly true</small></label>
+                <label><input type="radio" name="p2q1" value="5"><span>5</span><small>Very true</small></label>
+              </div>
+            </fieldset>
+            <fieldset class="likert">
+              <legend>We have active strategies for grants, corporate partnerships, and earned or contracted revenue.</legend>
+              <div class="likert-scale">
+                <label><input type="radio" name="p2q2" value="1" required><span>1</span><small>Not at all true</small></label>
+                <label><input type="radio" name="p2q2" value="2"><span>2</span><small>Rarely true</small></label>
+                <label><input type="radio" name="p2q2" value="3"><span>3</span><small>Somewhat true</small></label>
+                <label><input type="radio" name="p2q2" value="4"><span>4</span><small>Mostly true</small></label>
+                <label><input type="radio" name="p2q2" value="5"><span>5</span><small>Very true</small></label>
+              </div>
+            </fieldset>
+            <fieldset class="likert">
+              <legend>We track and forecast our revenue pipeline at least quarterly.</legend>
+              <div class="likert-scale">
+                <label><input type="radio" name="p2q3" value="1" required><span>1</span><small>Not at all true</small></label>
+                <label><input type="radio" name="p2q3" value="2"><span>2</span><small>Rarely true</small></label>
+                <label><input type="radio" name="p2q3" value="3"><span>3</span><small>Somewhat true</small></label>
+                <label><input type="radio" name="p2q3" value="4"><span>4</span><small>Mostly true</small></label>
+                <label><input type="radio" name="p2q3" value="5"><span>5</span><small>Very true</small></label>
+              </div>
+            </fieldset>
+          </div>
+
+          <div class="pillar-group" data-pillar-index="3">
+            <h2 class="pillar-heading">3. Leadership &amp; Organizational Development</h2>
+            <fieldset class="likert">
+              <legend>Roles and performance expectations are clearly defined across the organization.</legend>
+              <div class="likert-scale">
+                <label><input type="radio" name="p3q1" value="1" required><span>1</span><small>Not at all true</small></label>
+                <label><input type="radio" name="p3q1" value="2"><span>2</span><small>Rarely true</small></label>
+                <label><input type="radio" name="p3q1" value="3"><span>3</span><small>Somewhat true</small></label>
+                <label><input type="radio" name="p3q1" value="4"><span>4</span><small>Mostly true</small></label>
+                <label><input type="radio" name="p3q1" value="5"><span>5</span><small>Very true</small></label>
+              </div>
+            </fieldset>
+            <fieldset class="likert">
+              <legend>Leadership has a plan for developing staff and building bench strength.</legend>
+              <div class="likert-scale">
+                <label><input type="radio" name="p3q2" value="1" required><span>1</span><small>Not at all true</small></label>
+                <label><input type="radio" name="p3q2" value="2"><span>2</span><small>Rarely true</small></label>
+                <label><input type="radio" name="p3q2" value="3"><span>3</span><small>Somewhat true</small></label>
+                <label><input type="radio" name="p3q2" value="4"><span>4</span><small>Mostly true</small></label>
+                <label><input type="radio" name="p3q2" value="5"><span>5</span><small>Very true</small></label>
+              </div>
+            </fieldset>
+            <fieldset class="likert">
+              <legend>The board and executive team are aligned on strategic priorities.</legend>
+              <div class="likert-scale">
+                <label><input type="radio" name="p3q3" value="1" required><span>1</span><small>Not at all true</small></label>
+                <label><input type="radio" name="p3q3" value="2"><span>2</span><small>Rarely true</small></label>
+                <label><input type="radio" name="p3q3" value="3"><span>3</span><small>Somewhat true</small></label>
+                <label><input type="radio" name="p3q3" value="4"><span>4</span><small>Mostly true</small></label>
+                <label><input type="radio" name="p3q3" value="5"><span>5</span><small>Very true</small></label>
+              </div>
+            </fieldset>
+          </div>
+
+          <div class="pillar-group" data-pillar-index="4">
+            <h2 class="pillar-heading">4. Operations &amp; Infrastructure</h2>
+            <fieldset class="likert">
+              <legend>We use consistent systems (CRM, project management, etc.) to track our work and data.</legend>
+              <div class="likert-scale">
+                <label><input type="radio" name="p4q1" value="1" required><span>1</span><small>Not at all true</small></label>
+                <label><input type="radio" name="p4q1" value="2"><span>2</span><small>Rarely true</small></label>
+                <label><input type="radio" name="p4q1" value="3"><span>3</span><small>Somewhat true</small></label>
+                <label><input type="radio" name="p4q1" value="4"><span>4</span><small>Mostly true</small></label>
+                <label><input type="radio" name="p4q1" value="5"><span>5</span><small>Very true</small></label>
+              </div>
+            </fieldset>
+            <fieldset class="likert">
+              <legend>We have KPIs or dashboards that leadership reviews regularly.</legend>
+              <div class="likert-scale">
+                <label><input type="radio" name="p4q2" value="1" required><span>1</span><small>Not at all true</small></label>
+                <label><input type="radio" name="p4q2" value="2"><span>2</span><small>Rarely true</small></label>
+                <label><input type="radio" name="p4q2" value="3"><span>3</span><small>Somewhat true</small></label>
+                <label><input type="radio" name="p4q2" value="4"><span>4</span><small>Mostly true</small></label>
+                <label><input type="radio" name="p4q2" value="5"><span>5</span><small>Very true</small></label>
+              </div>
+            </fieldset>
+            <fieldset class="likert">
+              <legend>Our operational workflows are documented well enough that a new hire could follow them.</legend>
+              <div class="likert-scale">
+                <label><input type="radio" name="p4q3" value="1" required><span>1</span><small>Not at all true</small></label>
+                <label><input type="radio" name="p4q3" value="2"><span>2</span><small>Rarely true</small></label>
+                <label><input type="radio" name="p4q3" value="3"><span>3</span><small>Somewhat true</small></label>
+                <label><input type="radio" name="p4q3" value="4"><span>4</span><small>Mostly true</small></label>
+                <label><input type="radio" name="p4q3" value="5"><span>5</span><small>Very true</small></label>
+              </div>
+            </fieldset>
+          </div>
+
+          <div class="pillar-group" data-pillar-index="5">
+            <h2 class="pillar-heading">5. Partnership &amp; Ecosystem Strategy</h2>
+            <fieldset class="likert">
+              <legend>We have active partnerships across sectors: education, workforce, government, corporate, community.</legend>
+              <div class="likert-scale">
+                <label><input type="radio" name="p5q1" value="1" required><span>1</span><small>Not at all true</small></label>
+                <label><input type="radio" name="p5q1" value="2"><span>2</span><small>Rarely true</small></label>
+                <label><input type="radio" name="p5q1" value="3"><span>3</span><small>Somewhat true</small></label>
+                <label><input type="radio" name="p5q1" value="4"><span>4</span><small>Mostly true</small></label>
+                <label><input type="radio" name="p5q1" value="5"><span>5</span><small>Very true</small></label>
+              </div>
+            </fieldset>
+            <fieldset class="likert">
+              <legend>We have a deliberate strategy for building and stewarding partnerships, not just ad hoc relationships.</legend>
+              <div class="likert-scale">
+                <label><input type="radio" name="p5q2" value="1" required><span>1</span><small>Not at all true</small></label>
+                <label><input type="radio" name="p5q2" value="2"><span>2</span><small>Rarely true</small></label>
+                <label><input type="radio" name="p5q2" value="3"><span>3</span><small>Somewhat true</small></label>
+                <label><input type="radio" name="p5q2" value="4"><span>4</span><small>Mostly true</small></label>
+                <label><input type="radio" name="p5q2" value="5"><span>5</span><small>Very true</small></label>
+              </div>
+            </fieldset>
+            <fieldset class="likert">
+              <legend>Our key partnerships are formalized (MOUs or agreements) where appropriate.</legend>
+              <div class="likert-scale">
+                <label><input type="radio" name="p5q3" value="1" required><span>1</span><small>Not at all true</small></label>
+                <label><input type="radio" name="p5q3" value="2"><span>2</span><small>Rarely true</small></label>
+                <label><input type="radio" name="p5q3" value="3"><span>3</span><small>Somewhat true</small></label>
+                <label><input type="radio" name="p5q3" value="4"><span>4</span><small>Mostly true</small></label>
+                <label><input type="radio" name="p5q3" value="5"><span>5</span><small>Very true</small></label>
+              </div>
+            </fieldset>
+          </div>
+
+          <div class="assessment-submit">
+            <button type="submit" class="btn btn-primary">See My Results</button>
+            <p class="form-status" id="assessment-status" role="status" aria-live="polite"></p>
+          </div>
+        </form>
+
+        <!-- ============ RESULTS (shown by assessment.js) ============ -->
+        <div class="assessment-results" id="assessment-results" hidden>
+          <div class="results-score">
+            <span class="results-score-num" id="results-score-num"></span>
+            <span class="results-score-band" id="results-score-band"></span>
+          </div>
+          <p class="results-band-desc" id="results-band-desc"></p>
+          <p class="results-avg-overall" id="results-avg-overall" hidden></p>
+          <p class="results-narrative-loading" id="results-narrative-loading" hidden>Writing a personalized summary of your results…</p>
+
+          <h3 class="subhead">By Pillar</h3>
+          <div class="results-bars" id="results-bars"></div>
+
+          <div class="results-priority" id="results-priority"></div>
+
+          <div class="results-recommendation" id="results-recommendation"></div>
+
+          <div class="results-disclaimer">
+            <p>This is a directional self-assessment based on your own responses, not a formal audit or guarantee of any outcome. It's meant to help you think through your organization's sustainability posture and where to focus next.</p>
+          </div>
+
+          <div class="results-related">
+            <p>If grant funding is a meaningful part of your revenue strategy, <a href="https://grantpass-dashboard.onrender.com" target="_blank" rel="noopener">GrantPass</a> is a separate tool that scores your organization's readiness against a specific funder's stated priorities.</p>
+          </div>
+
+          <div class="results-cta">
+            <h3>Not sure where to start?</h3>
+            <p>A short conversation is the fastest way to turn this into a plan.</p>
+            <div class="hero-ctas center">
+              <a class="btn btn-primary" href="https://calendly.com/fparham/30min" target="_blank" rel="noopener">Schedule a Strategy Conversation</a>
+              <a class="btn btn-secondary" href="index.html#pricing">See Pricing</a>
+            </div>
+          </div>
+
+          <!-- Posts to the API_BASE configured at the top of js/assessment.js.
+               See frankly-inspired-backend/README.md for what deploys there. -->
+          <form class="results-email-form" id="results-email-form" novalidate>
+            <div class="hp-field" aria-hidden="true">
+              <label for="hp_field_assessment">Leave this field blank</label>
+              <input type="text" id="hp_field_assessment" name="hp_field" tabindex="-1" autocomplete="off">
+            </div>
+            <label for="results-email">Want these results emailed to you?</label>
+            <div class="results-email-row">
+              <input type="email" id="results-email" name="email" placeholder="Email address" required>
+              <button type="submit" class="btn btn-secondary">Email My Results</button>
+            </div>
+            <p class="form-status" id="email-status" role="status" aria-live="polite"></p>
+          </form>
+
+          <button type="button" class="results-retake" id="results-retake">Retake the Assessment</button>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <p class="footer-org">Frankly Inspired and Associates, LLC</p>
+      <p class="footer-meta">Founded by Franklin D. Parham · Lanham, Maryland / DMV</p>
+      <p class="footer-meta">
+        <a href="mailto:franklin@franklyinspired.associates">franklin@franklyinspired.associates</a>
+        <span aria-hidden="true">·</span>
+        <a href="tel:+12403918283">240-391-8283</a>
+      </p>
+      <p class="footer-links">
+        <a href="index.html">Back to Site</a>
+        <span aria-hidden="true">·</span>
+        <a href="https://calendly.com/fparham/30min" target="_blank" rel="noopener">Schedule a Strategy Conversation</a>
+      </p>
+      <p class="footer-legal">
+        © 2026 Frankly Inspired and Associates, LLC
+        <span aria-hidden="true">·</span>
+        <a href="privacy.html">Privacy Policy</a>
+        <span aria-hidden="true">·</span>
+        <a href="terms.html">Terms of Use</a>
+        <span aria-hidden="true">·</span>
+        <button type="button" class="manage-cookies-link" data-manage-cookies>Manage Cookie Preferences</button>
+      </p>
+    </div>
+  </footer>
+
+  <script src="js/assessment.js"></script>
+  <script src="js/cookie-consent.js"></script>
+  <script src="js/analytics.js"></script>
+</body>
+</html>
