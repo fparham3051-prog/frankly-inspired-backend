@@ -1,15 +1,21 @@
 /**
  * Frankly Inspired and Associates, LLC — website backend
  *
- * Three jobs:
+ * Four jobs:
  *   POST /api/contact              — the Contact form on index.html
  *   POST /api/assessment-lead      — the "email my results" form on assessment.html
- *   POST /api/assessment-narrative — AI-generated personalized result summary
+ *   POST /api/assessment-narrative — AI-generated personalized result summary,
+ *                                    shared by all five self-scoring tools
+ *                                    (self-assessment, revenue-growth,
+ *                                    leadership, sustainability,
+ *                                    institutional-advancement) via a `tool`
+ *                                    field. Also logs an anonymized copy of
+ *                                    the scores for benchmarking, if
+ *                                    DATABASE_URL is set — see db.js.
+ *   GET  /api/benchmarks           — aggregate stats for one tool
  *
- * All three validate input, reject obvious spam via a honeypot field where
- * applicable, and return a small JSON response. No database — this is
- * intentionally minimal. See README.md for what a v2 with persistence would
- * add and why it isn't here yet.
+ * All endpoints validate input and reject obvious spam via a honeypot field
+ * where applicable. See README.md for deployment and environment variables.
  */
 
 const express = require('express');
@@ -24,7 +30,7 @@ const {
   assessmentLeadNotificationEmail,
 } = require('./emailTemplates');
 const { generateAssessmentNarrative } = require('./aiNarrative');
-const { logAssessmentResponse, getBenchmarks } = require('./db');
+const { logAssessmentResponse, getBenchmarks, KNOWN_TOOLS } = require('./db');
 
 const PORT = process.env.PORT || 3000;
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
@@ -168,6 +174,11 @@ app.post('/api/assessment-lead', async (req, res) => {
 
 /* ------------------------------------------------------------------ */
 /* POST /api/assessment-narrative                                      */
+/* Shared by all five self-scoring tools. `tool` selects which system   */
+/* prompt aiNarrative.js uses and which bucket db.js logs/benchmarks    */
+/* against — an unrecognized or missing value safely falls back to      */
+/* 'self-assessment' rather than erroring, same graceful-degradation    */
+/* philosophy as the rest of this endpoint.                            */
 /* ------------------------------------------------------------------ */
 app.post('/api/assessment-narrative', async (req, res) => {
   const body = req.body || {};
@@ -180,16 +191,20 @@ app.post('/api/assessment-narrative', async (req, res) => {
     return res.status(400).json({ ok: false, error: 'Malformed pillar scores.' });
   }
 
+  const tool = KNOWN_TOOLS.includes(body.tool) ? body.tool : 'self-assessment';
+
   const narrative = await generateAssessmentNarrative({
+    tool,
     scorePct: body.scorePct,
     band: typeof body.band === 'string' ? body.band : '',
     pillarScores: body.pillarScores,
   });
 
   // Anonymized log for the benchmark dataset — no email, no org, just the
-  // scores. Fire-and-forget: never awaited into the response, never a
-  // reason for this endpoint to fail.
+  // tool, the scores, and a timestamp. Fire-and-forget: never awaited into
+  // the response, never a reason for this endpoint to fail.
   logAssessmentResponse({
+    tool,
     scorePct: body.scorePct,
     band: typeof body.band === 'string' ? body.band : '',
     pillarScores: body.pillarScores,
@@ -202,13 +217,16 @@ app.post('/api/assessment-narrative', async (req, res) => {
 });
 
 /* ------------------------------------------------------------------ */
-/* GET /api/benchmarks                                                 */
-/* Aggregate stats across every logged assessment response so far.     */
-/* Returns null fields if persistence isn't configured or nothing has   */
-/* been logged yet — never errors, since this is informational only.   */
+/* GET /api/benchmarks?tool=X                                          */
+/* Aggregate stats across every logged response so far, scoped to one   */
+/* tool (defaults to 'self-assessment' if omitted, for backward         */
+/* compatibility with the original single-tool caller). Returns null    */
+/* fields if persistence isn't configured or nothing has been logged    */
+/* yet — never errors, since this is informational only.               */
 /* ------------------------------------------------------------------ */
 app.get('/api/benchmarks', async (req, res) => {
-  const benchmarks = await getBenchmarks();
+  const tool = KNOWN_TOOLS.includes(req.query.tool) ? req.query.tool : 'self-assessment';
+  const benchmarks = await getBenchmarks(tool);
   res.json({ ok: true, benchmarks });
 });
 
