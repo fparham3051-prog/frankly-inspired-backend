@@ -31,6 +31,7 @@ const {
 } = require('./emailTemplates');
 const { generateAssessmentNarrative } = require('./aiNarrative');
 const { logAssessmentResponse, getBenchmarks, KNOWN_TOOLS } = require('./db');
+const { verifyScoreRef } = require('./scoreRef');
 
 const PORT = process.env.PORT || 3000;
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
@@ -67,6 +68,24 @@ app.get('/api/health', (req, res) => {
 });
 
 /* ------------------------------------------------------------------ */
+/* GET /api/score-ref?token=...                                        */
+/* Decodes and verifies a score_ref token minted by grantpass-backend  */
+/* when a visitor completes the free InstitutionalOS scorecard, so the */
+/* consulting site's contact page can show a personalized "continuing  */
+/* from your score" banner before the form is even submitted. Returns  */
+/* 404 (not an error) for a missing, tampered, or expired token - the  */
+/* frontend just skips the banner in that case.                        */
+/* ------------------------------------------------------------------ */
+app.get('/api/score-ref', (req, res) => {
+  const token = typeof req.query.token === 'string' ? req.query.token : '';
+  const payload = verifyScoreRef(token);
+  if (!payload) {
+    return res.status(404).json({ ok: false, error: 'Not found or expired.' });
+  }
+  return res.json({ ok: true, stage: payload.stage, score: payload.score, band: payload.band, source: payload.src || null });
+});
+
+/* ------------------------------------------------------------------ */
 /* POST /api/contact                                                   */
 /* ------------------------------------------------------------------ */
 app.post('/api/contact', async (req, res) => {
@@ -94,9 +113,15 @@ app.post('/api/contact', async (req, res) => {
 
   const fields = { ...body, support_area: supportArea };
 
+  // If this visitor arrived carrying a score_ref (they completed the free
+  // InstitutionalOS scorecard and clicked through to this form), verify it
+  // server-side against the shared secret. An invalid, tampered, or expired
+  // token is just treated as absent - it never blocks the submission.
+  const scoreContext = typeof body.score_ref === 'string' ? verifyScoreRef(body.score_ref) : null;
+
   try {
     const ack = contactAcknowledgementEmail(fields);
-    const notify = contactNotificationEmail(fields);
+    const notify = contactNotificationEmail(fields, scoreContext);
 
     await Promise.all([
       resend.emails.send({

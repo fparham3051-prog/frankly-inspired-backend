@@ -46,16 +46,24 @@ function contactAcknowledgementEmail(fields) {
   };
 }
 
-/** Sent to Franklin when a Contact form inquiry comes in. */
-function contactNotificationEmail(fields) {
+/** Sent to Franklin when a Contact form inquiry comes in. `scoreContext`
+ *  is the decoded, verified score_ref payload ({stage, score, band}) when
+ *  this visitor arrived via the free InstitutionalOS scorecard, or null -
+ *  see scoreRef.js and grantpass-backend's auth.py for how it's signed. */
+function contactNotificationEmail(fields, scoreContext) {
   const row = (label, value) => `
     <tr>
       <td style="padding:6px 12px 6px 0;color:#6b7480;font-family:Arial,sans-serif;font-size:13px;vertical-align:top;white-space:nowrap;">${escapeHtml(label)}</td>
       <td style="padding:6px 0;font-family:Arial,sans-serif;font-size:13px;">${escapeHtml(value || '—')}</td>
     </tr>`;
   const supportAreas = Array.isArray(fields.support_area) ? fields.support_area.join(', ') : (fields.support_area || '—');
+  const scoreContextHtml = scoreContext ? `
+    <p style="font-family:Arial,sans-serif;font-size:13px;background:${BRAND.lightGray};border-left:3px solid ${BRAND.gold};padding:10px 14px;margin:0 0 16px;">
+      <strong>Arrived from the free InstitutionalOS scorecard:</strong> ${escapeHtml(scoreContext.stage || '')} stage, score ${escapeHtml(scoreContext.score != null ? String(scoreContext.score) : '—')}/100 (${escapeHtml(scoreContext.band || '')}).
+    </p>` : '';
   const html = wrapEmail(`
     <h1 style="font-size:18px;color:${BRAND.navy};margin:0 0 16px;">New inquiry from the website</h1>
+    ${scoreContextHtml}
     <table style="border-collapse:collapse;width:100%;">
       ${row('Name', fields.name)}
       ${row('Organization', fields.organization)}
