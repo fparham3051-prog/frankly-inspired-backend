@@ -31,13 +31,26 @@ const {
 } = require('./emailTemplates');
 const { generateAssessmentNarrative } = require('./aiNarrative');
 const { logAssessmentResponse, getBenchmarks, KNOWN_TOOLS } = require('./db');
-const { verifyScoreRef } = require('./scoreRef');
+const { makeScoreRef, verifyScoreRef } = require('./scoreRef');
 
 const PORT = process.env.PORT || 3000;
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const FROM_EMAIL = process.env.FROM_EMAIL || 'Frankly Inspired <onboarding@resend.dev>';
 const TO_EMAIL = process.env.TO_EMAIL || 'franklin@franklyinspired.associates';
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || '*';
+
+// Display name for each of the five self-scoring tools, used as the
+// score_ref token's "stage" field so the contact-page banner reads
+// naturally ("Continuing from your Revenue & Growth scorecard: 62/100")
+// even though these tools don't have an InstitutionalOS BUILD/FUND/SUSTAIN
+// stage of their own.
+const TOOL_DISPLAY_NAMES = {
+  'self-assessment': 'Sustainability Self-Assessment',
+  'revenue-growth': 'Revenue & Growth',
+  leadership: 'Leadership & Operations',
+  sustainability: 'Sustainability Strategy',
+  'institutional-advancement': 'Institutional Advancement',
+};
 
 if (!RESEND_API_KEY) {
   // Fail loudly at boot rather than silently dropping every email later.
@@ -235,10 +248,21 @@ app.post('/api/assessment-narrative', async (req, res) => {
     pillarScores: body.pillarScores,
   });
 
+  // Signed score_ref token, same mechanism the InstitutionalOS scorecard
+  // uses: carries this result into the contact page so a visitor who
+  // clicks through doesn't have to re-explain themselves. null (not an
+  // error) if SCORE_REF_SECRET isn't configured.
+  const score_ref = makeScoreRef({
+    stage: TOOL_DISPLAY_NAMES[tool] || tool,
+    score: Math.round(body.scorePct),
+    band: typeof body.band === 'string' ? body.band : null,
+    src: tool,
+  });
+
   // narrative is null on any failure (missing key, API error, timeout) —
   // the frontend already has a static fallback description for this case,
   // so we return ok:true either way and just omit narrative when absent.
-  return res.json({ ok: true, narrative });
+  return res.json({ ok: true, narrative, score_ref });
 });
 
 /* ------------------------------------------------------------------ */
