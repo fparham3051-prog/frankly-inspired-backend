@@ -38,6 +38,12 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const FROM_EMAIL = process.env.FROM_EMAIL || 'Frankly Inspired <onboarding@resend.dev>';
 const TO_EMAIL = process.env.TO_EMAIL || 'franklin@franklyinspired.associates';
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || '*';
+// A copy of every website lead notification also goes here, so the
+// Frankly Inspired Operating System's lead-import automation can find them
+// via Gmail search — the OS reads Franklin's Gmail, not this Google
+// Workspace inbox, which the OS has no access to. Override or blank this
+// out via the LEAD_COPY_EMAIL env var if that behavior isn't wanted.
+const LEAD_COPY_EMAIL = process.env.LEAD_COPY_EMAIL || 'fparham3051@gmail.com';
 
 // Display name for each of the five self-scoring tools, used as the
 // score_ref token's "stage" field so the contact-page banner reads
@@ -145,7 +151,7 @@ app.post('/api/contact', async (req, res) => {
       }),
       resend.emails.send({
         from: FROM_EMAIL,
-        to: TO_EMAIL,
+        to: LEAD_COPY_EMAIL ? [TO_EMAIL, LEAD_COPY_EMAIL] : TO_EMAIL,
         replyTo: fields.email,
         subject: notify.subject,
         html: notify.html,
@@ -197,7 +203,7 @@ app.post('/api/assessment-lead', async (req, res) => {
       }),
       resend.emails.send({
         from: FROM_EMAIL,
-        to: TO_EMAIL,
+        to: LEAD_COPY_EMAIL ? [TO_EMAIL, LEAD_COPY_EMAIL] : TO_EMAIL,
         subject: notify.subject,
         html: notify.html,
       }),
