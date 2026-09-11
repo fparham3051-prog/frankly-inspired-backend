@@ -1,3 +1,4 @@
+
 /**
  * Frankly Inspired and Associates, LLC — website backend
  *
@@ -17,12 +18,12 @@
  * All endpoints validate input and reject obvious spam via a honeypot field
  * where applicable. See README.md for deployment and environment variables.
  */
-
+ 
 const express = require('express');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const { Resend } = require('resend');
-
+ 
 const {
   contactAcknowledgementEmail,
   contactNotificationEmail,
@@ -32,7 +33,7 @@ const {
 const { generateAssessmentNarrative } = require('./aiNarrative');
 const { logAssessmentResponse, getBenchmarks, KNOWN_TOOLS } = require('./db');
 const { makeScoreRef, verifyScoreRef } = require('./scoreRef');
-
+ 
 const PORT = process.env.PORT || 3000;
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const FROM_EMAIL = process.env.FROM_EMAIL || 'Frankly Inspired <onboarding@resend.dev>';
@@ -44,7 +45,7 @@ const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || '*';
 // Workspace inbox, which the OS has no access to. Override or blank this
 // out via the LEAD_COPY_EMAIL env var if that behavior isn't wanted.
 const LEAD_COPY_EMAIL = process.env.LEAD_COPY_EMAIL || 'fparham3051@gmail.com';
-
+ 
 // Display name for each of the five self-scoring tools, used as the
 // score_ref token's "stage" field so the contact-page banner reads
 // naturally ("Continuing from your Revenue & Growth scorecard: 62/100")
@@ -57,19 +58,19 @@ const TOOL_DISPLAY_NAMES = {
   sustainability: 'Sustainability Strategy',
   'institutional-advancement': 'Institutional Advancement',
 };
-
+ 
 if (!RESEND_API_KEY) {
   // Fail loudly at boot rather than silently dropping every email later.
   console.error('FATAL: RESEND_API_KEY is not set. Set it in the Render service\'s environment variables.');
   process.exit(1);
 }
-
+ 
 const resend = new Resend(RESEND_API_KEY);
-
+ 
 const app = express();
 app.use(express.json({ limit: '100kb' }));
 app.use(cors({ origin: ALLOWED_ORIGIN === '*' ? true : ALLOWED_ORIGIN.split(',').map(s => s.trim()) }));
-
+ 
 // Basic abuse protection: 5 submissions per 15 minutes per IP, shared across
 // both endpoints. This is not sophisticated spam protection — it's a floor,
 // not a ceiling. See README.md if this needs to be tightened later.
@@ -81,11 +82,11 @@ const limiter = rateLimit({
   message: { ok: false, error: 'Too many submissions. Please try again later.' },
 });
 app.use('/api/', limiter);
-
+ 
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, service: 'frankly-inspired-backend' });
 });
-
+ 
 /* ------------------------------------------------------------------ */
 /* GET /api/score-ref?token=...                                        */
 /* Decodes and verifies a score_ref token minted by grantpass-backend  */
@@ -103,20 +104,20 @@ app.get('/api/score-ref', (req, res) => {
   }
   return res.json({ ok: true, stage: payload.stage, score: payload.score, band: payload.band, source: payload.src || null });
 });
-
+ 
 /* ------------------------------------------------------------------ */
 /* POST /api/contact                                                   */
 /* ------------------------------------------------------------------ */
 app.post('/api/contact', async (req, res) => {
   const body = req.body || {};
-
+ 
   // Honeypot: a real visitor never fills this field in (it's visually
   // hidden). A bot that fills every field will trip it. Reply success
   // without sending anything, so the bot doesn't learn it was caught.
   if (body.hp_field) {
     return res.json({ ok: true });
   }
-
+ 
   const required = ['name', 'organization', 'title', 'email', 'challenge'];
   const missing = required.filter(f => !String(body[f] || '').trim());
   if (missing.length) {
@@ -129,59 +130,72 @@ app.post('/api/contact', async (req, res) => {
   if (supportArea.length === 0) {
     return res.status(400).json({ ok: false, error: 'Please select at least one area under "How can I support your organization?"' });
   }
-
+ 
   const fields = { ...body, support_area: supportArea };
-
+ 
   // If this visitor arrived carrying a score_ref (they completed the free
   // InstitutionalOS scorecard and clicked through to this form), verify it
   // server-side against the shared secret. An invalid, tampered, or expired
   // token is just treated as absent - it never blocks the submission.
   const scoreContext = typeof body.score_ref === 'string' ? verifyScoreRef(body.score_ref) : null;
-
+ 
   try {
     const ack = contactAcknowledgementEmail(fields);
     const notify = contactNotificationEmail(fields, scoreContext);
-
-    await Promise.all([
+ 
+    // Sent as separate calls per recipient, not one call with an array of
+    // "to" addresses. While this account is still sending from Resend's
+    // shared onboarding@resend.dev sender (no verified custom domain — see
+    // FROM_EMAIL above), Resend restricts delivery to the account's own
+    // verified address; bundling a second recipient into the same call can
+    // cause the whole send to silently fail delivery to both. Separate
+    // calls mean each recipient succeeds or fails independently. Logged,
+    // not thrown either way, so one bad address never blocks the others or
+    // fails the visitor's form submission.
+    const notifyTargets = [TO_EMAIL, LEAD_COPY_EMAIL].filter(Boolean);
+    const sendResults = await Promise.all([
       resend.emails.send({
         from: FROM_EMAIL,
         to: fields.email,
         subject: ack.subject,
         html: ack.html,
       }),
-      resend.emails.send({
+      ...notifyTargets.map(addr => resend.emails.send({
         from: FROM_EMAIL,
-        to: LEAD_COPY_EMAIL ? [TO_EMAIL, LEAD_COPY_EMAIL] : TO_EMAIL,
+        to: addr,
         replyTo: fields.email,
         subject: notify.subject,
         html: notify.html,
-      }),
+      })),
     ]);
-
+    sendResults.forEach(r => {
+      if (r && r.error) console.error('POST /api/contact: Resend reported a delivery error:', r.error);
+    });
+ 
     return res.json({ ok: true });
   } catch (err) {
     console.error('POST /api/contact failed:', err);
     return res.status(502).json({ ok: false, error: 'Could not send email right now. Please try again shortly, or email franklin@franklyinspired.associates directly.' });
   }
 });
-
+ 
 /* ------------------------------------------------------------------ */
 /* POST /api/assessment-lead                                           */
 /* ------------------------------------------------------------------ */
 app.post('/api/assessment-lead', async (req, res) => {
   const body = req.body || {};
-
+ 
   if (body.hp_field) {
     return res.json({ ok: true });
   }
-
+ 
   if (!isValidEmail(body.email)) {
     return res.status(400).json({ ok: false, error: 'Please provide a valid email address.' });
   }
   if (typeof body.scorePct !== 'number' || !Array.isArray(body.pillarScores)) {
     return res.status(400).json({ ok: false, error: 'Missing assessment results.' });
   }
-
+ 
   const payload = {
     email: body.email,
     scorePct: body.scorePct,
@@ -189,33 +203,39 @@ app.post('/api/assessment-lead', async (req, res) => {
     pillarScores: body.pillarScores,
     narrative: typeof body.narrative === 'string' ? body.narrative : null,
   };
-
+ 
   try {
     const results = assessmentResultsEmail(payload);
     const notify = assessmentLeadNotificationEmail(payload);
-
-    await Promise.all([
+ 
+    // See the matching comment in POST /api/contact: separate send() calls
+    // per recipient, not one call with multiple "to" addresses.
+    const notifyTargets = [TO_EMAIL, LEAD_COPY_EMAIL].filter(Boolean);
+    const sendResults = await Promise.all([
       resend.emails.send({
         from: FROM_EMAIL,
         to: payload.email,
         subject: results.subject,
         html: results.html,
       }),
-      resend.emails.send({
+      ...notifyTargets.map(addr => resend.emails.send({
         from: FROM_EMAIL,
-        to: LEAD_COPY_EMAIL ? [TO_EMAIL, LEAD_COPY_EMAIL] : TO_EMAIL,
+        to: addr,
         subject: notify.subject,
         html: notify.html,
-      }),
+      })),
     ]);
-
+    sendResults.forEach(r => {
+      if (r && r.error) console.error('POST /api/assessment-lead: Resend reported a delivery error:', r.error);
+    });
+ 
     return res.json({ ok: true });
   } catch (err) {
     console.error('POST /api/assessment-lead failed:', err);
     return res.status(502).json({ ok: false, error: 'Could not send email right now. Please try again shortly.' });
   }
 });
-
+ 
 /* ------------------------------------------------------------------ */
 /* POST /api/assessment-narrative                                      */
 /* Shared by all five self-scoring tools. `tool` selects which system   */
@@ -226,7 +246,7 @@ app.post('/api/assessment-lead', async (req, res) => {
 /* ------------------------------------------------------------------ */
 app.post('/api/assessment-narrative', async (req, res) => {
   const body = req.body || {};
-
+ 
   if (typeof body.scorePct !== 'number' || !Array.isArray(body.pillarScores) || body.pillarScores.length === 0) {
     return res.status(400).json({ ok: false, error: 'Missing assessment results.' });
   }
@@ -234,16 +254,16 @@ app.post('/api/assessment-narrative', async (req, res) => {
   if (!pillarsValid) {
     return res.status(400).json({ ok: false, error: 'Malformed pillar scores.' });
   }
-
+ 
   const tool = KNOWN_TOOLS.includes(body.tool) ? body.tool : 'self-assessment';
-
+ 
   const narrative = await generateAssessmentNarrative({
     tool,
     scorePct: body.scorePct,
     band: typeof body.band === 'string' ? body.band : '',
     pillarScores: body.pillarScores,
   });
-
+ 
   // Anonymized log for the benchmark dataset — no email, no org, just the
   // tool, the scores, and a timestamp. Fire-and-forget: never awaited into
   // the response, never a reason for this endpoint to fail.
@@ -253,7 +273,7 @@ app.post('/api/assessment-narrative', async (req, res) => {
     band: typeof body.band === 'string' ? body.band : '',
     pillarScores: body.pillarScores,
   });
-
+ 
   // Signed score_ref token, same mechanism the InstitutionalOS scorecard
   // uses: carries this result into the contact page so a visitor who
   // clicks through doesn't have to re-explain themselves. null (not an
@@ -264,13 +284,13 @@ app.post('/api/assessment-narrative', async (req, res) => {
     band: typeof body.band === 'string' ? body.band : null,
     src: tool,
   });
-
+ 
   // narrative is null on any failure (missing key, API error, timeout) —
   // the frontend already has a static fallback description for this case,
   // so we return ok:true either way and just omit narrative when absent.
   return res.json({ ok: true, narrative, score_ref });
 });
-
+ 
 /* ------------------------------------------------------------------ */
 /* GET /api/benchmarks?tool=X                                          */
 /* Aggregate stats across every logged response so far, scoped to one   */
@@ -284,11 +304,11 @@ app.get('/api/benchmarks', async (req, res) => {
   const benchmarks = await getBenchmarks(tool);
   res.json({ ok: true, benchmarks });
 });
-
+ 
 function isValidEmail(value) {
   return typeof value === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
 }
-
+ 
 app.listen(PORT, () => {
   console.log(`Frankly Inspired backend listening on port ${PORT}`);
 });
