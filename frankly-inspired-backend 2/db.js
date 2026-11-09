@@ -35,6 +35,7 @@ const KNOWN_TOOLS = [
   'sustainability',
   'institutional-advancement',
   'health-index',
+  'candid-seal',
 ];
 
 let pool = null;

@@ -72,6 +72,7 @@ const TOOL_DISPLAY_NAMES = {
   sustainability: 'Sustainability Strategy',
   'institutional-advancement': 'Institutional Advancement',
   'health-index': 'InstitutionalOS Health Index',
+  'candid-seal': 'Candid Seal Path',
 };
  
 if (!RESEND_API_KEY) {
@@ -261,6 +262,7 @@ app.post('/api/assessment-lead', async (req, res) => {
     healthIndex,
     stage: STAGE_LABELS[body.stage] || '',
     org: cleanOrg(body.org),
+    seal: cleanSeal(body.seal),
     toolsTaken: Array.isArray(body.toolsTaken) ? body.toolsTaken.filter((t) => typeof t === 'string').slice(0, 8).map((t) => t.slice(0, 60)) : [],
   };
 
@@ -269,6 +271,7 @@ app.post('/api/assessment-lead', async (req, res) => {
     `Tool: ${payload.toolName}`,
     payload.org && `Organization: ${payload.org.name} (EIN ${payload.org.ein}${payload.org.state ? ', ' + payload.org.state : ''})`,
     payload.toolsTaken.length && `Tools taken: ${payload.toolsTaken.join(', ')}`,
+    payload.seal && `Candid Seal path: ${payload.seal}`,
     payload.stage && `Stage: ${payload.stage}`,
     `Composite score: ${Math.round(payload.scorePct)}%${payload.band ? ' (' + payload.band + ')' : ''}`,
     'By area: ' + payload.pillarScores.map(p => `${p.label} ${Math.round(p.pct)}%`).join(', '),
@@ -483,6 +486,16 @@ app.get('/api/org-990', async (req, res) => {
     res.status(502).json({ ok: false, error: 'Lookup is unavailable right now.' });
   }
 });
+
+// Candid Seal level the visitor qualifies for and the next one, from the
+// Candid Seal Path tool (self-reported).
+const SEAL_NAMES = { bronze: 'Bronze', silver: 'Silver', gold: 'Gold', platinum: 'Platinum' };
+function cleanSeal(s) {
+  if (!s || typeof s !== 'object') return '';
+  const cur = SEAL_NAMES[s.current] || 'no Seal yet';
+  const next = SEAL_NAMES[s.next];
+  return next ? `${cur} now, next ${next} (self-reported)` : `${cur} (self-reported; keep current yearly)`;
+}
 
 // Organization the visitor picked from the 990 lookup, if any.
 function cleanOrg(o) {
