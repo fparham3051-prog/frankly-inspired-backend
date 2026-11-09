@@ -33,6 +33,9 @@ const {
 const { generateAssessmentNarrative } = require('./aiNarrative');
 const { logAssessmentResponse, getBenchmarks, KNOWN_TOOLS } = require('./db');
 const { makeScoreRef, verifyScoreRef } = require('./scoreRef');
+const { pushProspect, getGivingLandscape, osConfigured } = require('./osClient');
+const { mapToHealthIndex, formatHealthIndex } = require('./healthIndex');
+const crypto = require('crypto');
  
 const PORT = process.env.PORT || 3000;
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
@@ -81,7 +84,18 @@ const limiter = rateLimit({
   legacyHeaders: false,
   message: { ok: false, error: 'Too many submissions. Please try again later.' },
 });
-app.use('/api/', limiter);
+// Only the form submissions get the strict limit. The narrative and
+// benchmark calls fire automatically on every tool result, so sharing one
+// 5-per-15-minutes budget with them meant a visitor who finished two tools
+// and then tried to email results or contact Franklin could be blocked.
+app.use(['/api/contact', '/api/assessment-lead'], limiter);
+app.use('/api/', rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { ok: false, error: 'Too many requests. Please try again later.' },
+}));
  
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, service: 'frankly-inspired-backend' });
@@ -139,9 +153,32 @@ app.post('/api/contact', async (req, res) => {
   // token is just treated as absent - it never blocks the submission.
   const scoreContext = typeof body.score_ref === 'string' ? verifyScoreRef(body.score_ref) : null;
  
+  // Straight into the operations app's Prospecting view. Best-effort: if it
+  // fails or isn't configured, the email below (with its lead reference)
+  // lets the daily Gmail import add it instead, without duplicating.
+  const leadRef = 'web-contact-' + crypto.randomUUID();
+  const contactNotes = [
+    fields.title && fields.title !== 'Not provided' && `Title: ${fields.title}`,
+    `Email: ${fields.email}`,
+    fields.phone && `Phone: ${fields.phone}`,
+    fields.org_website && `Website: ${fields.org_website}`,
+    supportArea.filter(a => a !== 'Not specified').length && `Support area(s): ${supportArea.filter(a => a !== 'Not specified').join(', ')}`,
+    fields.timeline && `Timeline: ${fields.timeline}`,
+    fields.referral && `Referral: ${fields.referral}`,
+    scoreContext && `Arrived from ${scoreContext.stage || 'a free tool'}: ${scoreContext.score != null ? scoreContext.score + '/100' : ''} ${scoreContext.band ? '(' + scoreContext.band + ')' : ''}`.trim(),
+    `Challenge: ${String(fields.challenge || '').trim()}`,
+  ].filter(Boolean).join('\n');
+  const osAdded = await pushProspect({
+    name: String(fields.name).trim(),
+    org: String(fields.organization || '').trim(),
+    source: 'website contact form',
+    notes: contactNotes,
+    sourceRef: leadRef,
+  });
+
   try {
     const ack = contactAcknowledgementEmail(fields);
-    const notify = contactNotificationEmail(fields, scoreContext);
+    const notify = contactNotificationEmail(fields, scoreContext, leadRef, osAdded);
  
     // Sent as separate calls per recipient, not one call with an array of
     // "to" addresses. While this account is still sending from Resend's
@@ -196,17 +233,37 @@ app.post('/api/assessment-lead', async (req, res) => {
     return res.status(400).json({ ok: false, error: 'Missing assessment results.' });
   }
  
+  const tool = KNOWN_TOOLS.includes(body.tool) ? body.tool : 'self-assessment';
+  const healthIndex = mapToHealthIndex(tool, body.pillarScores);
   const payload = {
     email: body.email,
     scorePct: body.scorePct,
     band: body.band,
     pillarScores: body.pillarScores,
     narrative: typeof body.narrative === 'string' ? body.narrative : null,
+    tool,
+    toolName: TOOL_DISPLAY_NAMES[tool] || 'Sustainability Self-Assessment',
+    healthIndex,
   };
- 
+
+  const leadRef = 'web-tool-' + crypto.randomUUID();
+  const toolNotes = [
+    `Tool: ${payload.toolName}`,
+    `Composite score: ${Math.round(payload.scorePct)}%${payload.band ? ' (' + payload.band + ')' : ''}`,
+    'By area: ' + payload.pillarScores.map(p => `${p.label} ${Math.round(p.pct)}%`).join(', '),
+    formatHealthIndex(healthIndex),
+  ].filter(Boolean).join('\n');
+  const osAdded = await pushProspect({
+    name: String(body.email).trim(),
+    org: '',
+    source: 'assessment tool',
+    notes: toolNotes,
+    sourceRef: leadRef,
+  });
+
   try {
     const results = assessmentResultsEmail(payload);
-    const notify = assessmentLeadNotificationEmail(payload);
+    const notify = assessmentLeadNotificationEmail(payload, leadRef, osAdded);
  
     // See the matching comment in POST /api/contact: separate send() calls
     // per recipient, not one call with multiple "to" addresses.
@@ -305,10 +362,26 @@ app.get('/api/benchmarks', async (req, res) => {
   res.json({ ok: true, benchmarks });
 });
  
+/* ------------------------------------------------------------------ */
+/* GET /api/giving-landscape                                           */
+/* Recent public major gifts from the operations app's Giving           */
+/* Landscape, for the website's Insights page. Only gifts marked public */
+/* in the app are ever returned. Cached for an hour.                    */
+/* ------------------------------------------------------------------ */
+app.get('/api/giving-landscape', async (req, res) => {
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 6, 1), 12);
+  const gifts = await getGivingLandscape(limit);
+  res.set('Cache-Control', 'public, max-age=900');
+  res.json({ ok: true, gifts: gifts || [] });
+});
+
 function isValidEmail(value) {
   return typeof value === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
 }
  
 app.listen(PORT, () => {
   console.log(`Frankly Inspired backend listening on port ${PORT}`);
+  console.log(osConfigured()
+    ? 'Operations app connection: on (leads go straight to Prospecting).'
+    : 'Operations app connection: off (set OS_API_URL and OS_PROSPECTS_TOKEN); leads reach the app via the daily email import.');
 });

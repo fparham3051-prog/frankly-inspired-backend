@@ -46,11 +46,23 @@ function contactAcknowledgementEmail(fields) {
   };
 }
 
+/** Footer line on every lead notification. The daily Gmail import uses the
+ *  "Lead reference" value as its de-duplication key, so a lead this backend
+ *  already sent straight to the operations app is never imported twice. */
+function leadRefHtml(leadRef, osAdded) {
+  if (!leadRef) return '';
+  return `
+    <p style="font-family:Arial,sans-serif;font-size:12px;color:#6b7480;border-top:1px solid #e2e6ea;padding-top:10px;margin-top:20px;">
+      Lead reference: ${escapeHtml(leadRef)}<br>
+      ${osAdded ? 'Already added to Prospecting in your operating system.' : 'Not yet in your operating system; the daily import will add it.'}
+    </p>`;
+}
+
 /** Sent to Franklin when a Contact form inquiry comes in. `scoreContext`
  *  is the decoded, verified score_ref payload ({stage, score, band}) when
  *  this visitor arrived via the free InstitutionalOS scorecard, or null -
  *  see scoreRef.js and grantpass-backend's auth.py for how it's signed. */
-function contactNotificationEmail(fields, scoreContext) {
+function contactNotificationEmail(fields, scoreContext, leadRef, osAdded) {
   const row = (label, value) => `
     <tr>
       <td style="padding:6px 12px 6px 0;color:#6b7480;font-family:Arial,sans-serif;font-size:13px;vertical-align:top;white-space:nowrap;">${escapeHtml(label)}</td>
@@ -77,6 +89,7 @@ function contactNotificationEmail(fields, scoreContext) {
     </table>
     <p style="font-family:Arial,sans-serif;font-size:13px;color:#6b7480;margin-top:16px;">Challenge / opportunity:</p>
     <p style="font-family:Arial,sans-serif;font-size:14px;white-space:pre-wrap;">${escapeHtml(fields.challenge)}</p>
+    ${leadRefHtml(leadRef, osAdded)}
   `);
   return {
     subject: `New inquiry: ${fields.organization || fields.name || 'Website contact form'}`,
@@ -84,15 +97,17 @@ function contactNotificationEmail(fields, scoreContext) {
   };
 }
 
-/** Sent to a visitor who asks to have their self-assessment results emailed. */
+/** Sent to a visitor who asks to have their results emailed (any of the
+ *  five tools; payload.toolName names which one). */
 function assessmentResultsEmail(payload) {
+  const toolName = payload.toolName || 'Nonprofit Sustainability Self-Assessment';
   const bars = (payload.pillarScores || []).map(p => `
     <tr>
       <td style="padding:4px 0;font-family:Arial,sans-serif;font-size:13px;width:55%;">${escapeHtml(p.label)}</td>
       <td style="padding:4px 0;font-family:Arial,sans-serif;font-size:13px;color:${BRAND.gold};font-weight:bold;">${Math.round(p.pct)}%</td>
     </tr>`).join('');
   const html = wrapEmail(`
-    <h1 style="font-size:20px;color:${BRAND.navy};margin:0 0 8px;">Your Nonprofit Sustainability Self-Assessment Results</h1>
+    <h1 style="font-size:20px;color:${BRAND.navy};margin:0 0 8px;">Your ${escapeHtml(toolName)} Results</h1>
     <p style="font-family:Arial,sans-serif;font-size:36px;font-weight:bold;color:${BRAND.gold};margin:16px 0 0;">${Math.round(payload.scorePct)}%</p>
     <p style="font-family:Arial,sans-serif;font-size:13px;text-transform:uppercase;letter-spacing:0.06em;color:${BRAND.navy};font-weight:bold;margin:4px 0 20px;">${escapeHtml(payload.band || '')}</p>
     <table style="border-collapse:collapse;width:100%;margin-bottom:20px;">${bars}</table>
@@ -104,19 +119,25 @@ function assessmentResultsEmail(payload) {
     <p style="margin-top:28px;">In partnership,<br>Franklin D. Parham<br>Founder and Principal<br>Frankly Inspired and Associates, LLC</p>
   `);
   return {
-    subject: 'Your Nonprofit Sustainability Self-Assessment Results',
+    subject: `Your ${toolName} Results`,
     html,
   };
 }
 
-/** Sent to Franklin when someone completes the assessment and asks for results by email. */
-function assessmentLeadNotificationEmail(payload) {
+/** Sent to Franklin when someone completes a tool and asks for results by email.
+ *  The "Email:", "Composite score:" and "By pillar:" lines are what the daily
+ *  Gmail import parses, so keep their wording. */
+function assessmentLeadNotificationEmail(payload, leadRef, osAdded) {
   const bars = (payload.pillarScores || []).map(p => `${p.label}: ${Math.round(p.pct)}%`).join(' · ');
+  const hi = (payload.healthIndex || []).map(r => `${r.dimension}: ${r.pct}%`).join(' · ');
   const html = wrapEmail(`
     <h1 style="font-size:18px;color:${BRAND.navy};margin:0 0 16px;">New self-assessment lead</h1>
     <p style="font-family:Arial,sans-serif;font-size:13px;"><strong>Email:</strong> ${escapeHtml(payload.email)}</p>
     <p style="font-family:Arial,sans-serif;font-size:13px;"><strong>Composite score:</strong> ${Math.round(payload.scorePct)}% (${escapeHtml(payload.band || '')})</p>
     <p style="font-family:Arial,sans-serif;font-size:13px;"><strong>By pillar:</strong> ${escapeHtml(bars)}</p>
+    <p style="font-family:Arial,sans-serif;font-size:13px;"><strong>Tool:</strong> ${escapeHtml(payload.toolName || 'Sustainability Self-Assessment')}</p>
+    ${hi ? `<p style="font-family:Arial,sans-serif;font-size:13px;"><strong>Indicative Health Index (self-reported):</strong> ${escapeHtml(hi)}</p>` : ''}
+    ${leadRefHtml(leadRef, osAdded)}
   `);
   return {
     subject: `New assessment lead: ${payload.email}`,

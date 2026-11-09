@@ -67,3 +67,27 @@ Then `curl localhost:3000/api/health` should return `{"ok":true,...}`.
 
 - **No persistence.** If Resend is down or misconfigured, a submission is lost except for whatever error the visitor sees. Given the volume this site will see early on, that's an acceptable tradeoff for a v1 — but if it ever isn't, the natural next step is a Postgres table (Render has one available in your workspace already) logging every submission before the emails send, so nothing depends on email delivery succeeding. Ask if you want that added.
 - **Spam protection is basic.** A honeypot field plus a 5-requests-per-15-minutes rate limit per IP. Fine for now; if spam becomes a real problem, adding something like hCaptcha to both forms is the next step.
+
+## Operations app connection (direct lead sync)
+
+Every contact-form inquiry and every "email my results" request is sent
+straight into the Frankly Inspired Operating System's Prospecting view the
+moment it arrives (see `osClient.js`). Tool leads carry an indicative,
+self-reported reading on the seven InstitutionalOS Health Index dimensions
+(see `healthIndex.js`).
+
+Set on this Render service:
+- `OS_API_URL` = `https://frankly-inspired-os.onrender.com`
+- `OS_PROSPECTS_TOKEN` = a prospects-scoped admin key from the operations app
+
+Without them, nothing breaks: leads still arrive by email and the daily
+Gmail import adds them. Each notification email carries a "Lead reference"
+line; the import uses it as the de-duplication key, so a lead synced
+directly is never imported twice.
+
+`GET /api/giving-landscape` returns recent public gifts from the
+operations app's Giving Landscape (cached for an hour) for the website's
+Insights page. It only uses `OS_API_URL`.
+
+Rate limits: form submissions (`/api/contact`, `/api/assessment-lead`) are
+limited to 5 per 15 minutes per visitor; everything else to 60.
