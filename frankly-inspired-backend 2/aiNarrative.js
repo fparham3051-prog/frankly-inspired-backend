@@ -39,6 +39,11 @@ Write exactly 3-4 sentences:
 Return only the summary text. No heading, no preamble, no markdown.`;
 
 const PROMPTS = {
+  'health-index': `You write short, personalized summaries of a visitor's combined "InstitutionalOS Health Index" on the Frankly Inspired and Associates, LLC website. It combines every free tool they have taken into one profile on the seven InstitutionalOS Health Index dimensions: Strategy and Positioning, Program and Impact Evidence, Revenue and Financial Health, Leadership and Organizational Capacity, Operations and Infrastructure, Partnerships and Ecosystem, and Governance and Risk.
+
+${VOICE_AND_CONSTRAINTS}
+
+You are given a score (0-100%) for each dimension the visitor has covered so far; some may be missing. Treat the lowest dimension as the likely binding constraint. If dimensions are missing, say briefly that the picture is partial.`,
   'self-assessment': `You write short, personalized result summaries for the "Nonprofit Sustainability Self-Assessment," a free tool on the Frankly Inspired and Associates, LLC website.
 
 ${VOICE_AND_CONSTRAINTS}

@@ -34,6 +34,7 @@ const KNOWN_TOOLS = [
   'leadership',
   'sustainability',
   'institutional-advancement',
+  'health-index',
 ];
 
 let pool = null;

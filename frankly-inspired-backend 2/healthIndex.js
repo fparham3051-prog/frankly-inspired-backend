@@ -21,6 +21,8 @@ const DIMENSIONS = [
 
 // tool -> { area label (as the tool sends it) -> dimension }
 const MAP = {
+  // The combined profile already speaks in dimensions.
+  'health-index': Object.fromEntries(DIMENSIONS.map((d) => [d, d])),
   'self-assessment': {
     'Sustainability Strategy': 'Strategy and Positioning',
     'Revenue Diversification': 'Revenue and Financial Health',

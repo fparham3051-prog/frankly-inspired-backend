@@ -133,6 +133,8 @@ function assessmentLeadNotificationEmail(payload, leadRef, osAdded) {
   const html = wrapEmail(`
     <h1 style="font-size:18px;color:${BRAND.navy};margin:0 0 16px;">New self-assessment lead</h1>
     <p style="font-family:Arial,sans-serif;font-size:13px;"><strong>Email:</strong> ${escapeHtml(payload.email)}</p>
+    ${payload.org ? `<p style="font-family:Arial,sans-serif;font-size:13px;"><strong>Organization:</strong> ${escapeHtml(payload.org.name)} (EIN ${escapeHtml(payload.org.ein)}${payload.org.state ? ', ' + escapeHtml(payload.org.state) : ''}) &middot; <a href="https://projects.propublica.org/nonprofits/organizations/${escapeHtml(payload.org.ein.replace('-', ''))}">990s</a></p>` : ''}
+    ${payload.toolsTaken && payload.toolsTaken.length ? `<p style="font-family:Arial,sans-serif;font-size:13px;"><strong>Tools taken:</strong> ${escapeHtml(payload.toolsTaken.join(', '))}</p>` : ''}
     <p style="font-family:Arial,sans-serif;font-size:13px;"><strong>Composite score:</strong> ${Math.round(payload.scorePct)}% (${escapeHtml(payload.band || '')})</p>
     <p style="font-family:Arial,sans-serif;font-size:13px;"><strong>By pillar:</strong> ${escapeHtml(bars)}</p>
     <p style="font-family:Arial,sans-serif;font-size:13px;"><strong>Tool:</strong> ${escapeHtml(payload.toolName || 'Sustainability Self-Assessment')}</p>
@@ -141,7 +143,7 @@ function assessmentLeadNotificationEmail(payload, leadRef, osAdded) {
     ${leadRefHtml(leadRef, osAdded)}
   `);
   return {
-    subject: `New assessment lead: ${payload.email}`,
+    subject: `New assessment lead: ${payload.org ? payload.org.name : payload.email}`,
     html,
   };
 }

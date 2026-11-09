@@ -37,6 +37,7 @@ const { logAssessmentResponse, getBenchmarks, KNOWN_TOOLS } = require('./db');
 const { makeScoreRef, verifyScoreRef } = require('./scoreRef');
 const { pushProspect, getGivingLandscape, osConfigured } = require('./osClient');
 const { mapToHealthIndex, formatHealthIndex } = require('./healthIndex');
+const { searchOrgs, orgSnapshot, fmtEin } = require('./org990');
 const crypto = require('crypto');
  
 const PORT = process.env.PORT || 3000;
@@ -70,6 +71,7 @@ const TOOL_DISPLAY_NAMES = {
   leadership: 'Leadership & Operations',
   sustainability: 'Sustainability Strategy',
   'institutional-advancement': 'Institutional Advancement',
+  'health-index': 'InstitutionalOS Health Index',
 };
  
 if (!RESEND_API_KEY) {
@@ -258,11 +260,15 @@ app.post('/api/assessment-lead', async (req, res) => {
     toolName: TOOL_DISPLAY_NAMES[tool] || 'Sustainability Self-Assessment',
     healthIndex,
     stage: STAGE_LABELS[body.stage] || '',
+    org: cleanOrg(body.org),
+    toolsTaken: Array.isArray(body.toolsTaken) ? body.toolsTaken.filter((t) => typeof t === 'string').slice(0, 8).map((t) => t.slice(0, 60)) : [],
   };
 
   const leadRef = 'web-tool-' + crypto.randomUUID();
   const toolNotes = [
     `Tool: ${payload.toolName}`,
+    payload.org && `Organization: ${payload.org.name} (EIN ${payload.org.ein}${payload.org.state ? ', ' + payload.org.state : ''})`,
+    payload.toolsTaken.length && `Tools taken: ${payload.toolsTaken.join(', ')}`,
     payload.stage && `Stage: ${payload.stage}`,
     `Composite score: ${Math.round(payload.scorePct)}%${payload.band ? ' (' + payload.band + ')' : ''}`,
     'By area: ' + payload.pillarScores.map(p => `${p.label} ${Math.round(p.pct)}%`).join(', '),
@@ -270,7 +276,7 @@ app.post('/api/assessment-lead', async (req, res) => {
   ].filter(Boolean).join('\n');
   const osAdded = await pushProspect({
     name: String(body.email).trim(),
-    org: '',
+    org: payload.org ? payload.org.name : '',
     source: 'assessment tool',
     notes: toolNotes,
     sourceRef: leadRef,
@@ -448,6 +454,44 @@ app.get('/api/giving-landscape', async (req, res) => {
   res.set('Cache-Control', 'public, max-age=900');
   res.json({ ok: true, gifts: gifts || [] });
 });
+
+/* ------------------------------------------------------------------ */
+/* GET /api/org-search?q=&state=   and   GET /api/org-990?ein=         */
+/* Public IRS Form 990 lookup (ProPublica Nonprofit Explorer) so the    */
+/* free tools can start from the same filing a funder reads. Read-only, */
+/* no visitor data stored.                                              */
+/* ------------------------------------------------------------------ */
+app.get('/api/org-search', async (req, res) => {
+  try {
+    const results = await searchOrgs(req.query.q, String(req.query.state || '').toUpperCase());
+    res.set('Cache-Control', 'public, max-age=3600');
+    res.json({ ok: true, results });
+  } catch (err) {
+    console.error('GET /api/org-search failed:', err.message);
+    res.status(502).json({ ok: false, error: 'Lookup is unavailable right now.' });
+  }
+});
+
+app.get('/api/org-990', async (req, res) => {
+  try {
+    const snap = await orgSnapshot(req.query.ein);
+    if (!snap) return res.status(404).json({ ok: false, error: 'No filings found for that EIN.' });
+    res.set('Cache-Control', 'public, max-age=3600');
+    res.json({ ok: true, ...snap });
+  } catch (err) {
+    console.error('GET /api/org-990 failed:', err.message);
+    res.status(502).json({ ok: false, error: 'Lookup is unavailable right now.' });
+  }
+});
+
+// Organization the visitor picked from the 990 lookup, if any.
+function cleanOrg(o) {
+  if (!o || typeof o !== 'object') return null;
+  const ein = String(o.ein || '').replace(/[^0-9]/g, '');
+  const name = typeof o.name === 'string' ? o.name.trim().slice(0, 150) : '';
+  if (ein.length !== 9 || !name) return null;
+  return { ein: fmtEin(ein), name, state: typeof o.state === 'string' ? o.state.slice(0, 2) : '' };
+}
 
 function isValidEmail(value) {
   return typeof value === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
