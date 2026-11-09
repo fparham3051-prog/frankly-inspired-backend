@@ -91,3 +91,12 @@ Insights page. It only uses `OS_API_URL`.
 
 Rate limits: form submissions (`/api/contact`, `/api/assessment-lead`) are
 limited to 5 per 15 minutes per visitor; everything else to 60.
+
+## Scorecard results emails
+
+`POST /api/scorecard-results` lets the InstitutionalOS scorecard service
+(grantpass-backend) email a visitor their free scorecard result and notify
+Franklin, using this service's mail setup. It is server-to-server only and
+requires `SCORECARD_MAIL_SECRET` (the same value set on grantpass-backend)
+in an `X-Scorecard-Secret` header. Not rate-limited, since every call comes
+from the scorecard's one address.

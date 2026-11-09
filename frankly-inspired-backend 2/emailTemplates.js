@@ -145,6 +145,49 @@ function assessmentLeadNotificationEmail(payload, leadRef, osAdded) {
   };
 }
 
+/** Sent to a visitor who asks for their free InstitutionalOS scorecard
+ *  result by email. `r` = {stage, stageName, overall, band, decision,
+ *  dimensions:[{name, score, note, liftTarget}], continueUrl}. */
+function scorecardResultsEmail(r) {
+  const dims = (r.dimensions || []);
+  const lowest = dims.length ? dims.reduce((a, b) => ((b.score ?? 0) < (a.score ?? 0) ? b : a)) : null;
+  const rows = dims.map(d => `
+    <tr>
+      <td style="padding:6px 8px 6px 0;font-family:Arial,sans-serif;font-size:13px;vertical-align:top;width:45%;">${escapeHtml(d.name)}</td>
+      <td style="padding:6px 8px;font-family:Arial,sans-serif;font-size:13px;color:${BRAND.gold};font-weight:bold;vertical-align:top;">${Math.round(d.score ?? 0)}</td>
+      <td style="padding:6px 0;font-family:Arial,sans-serif;font-size:12px;color:#6b7480;vertical-align:top;">${escapeHtml(d.note || '')}</td>
+    </tr>`).join('');
+  const html = wrapEmail(`
+    <h1 style="font-size:20px;color:${BRAND.navy};margin:0 0 8px;">Your InstitutionalOS Scorecard Result</h1>
+    <p style="font-family:Arial,sans-serif;font-size:13px;color:#6b7480;margin:0;">${escapeHtml(r.stageName || r.stage || '')} stage</p>
+    <p style="font-family:Arial,sans-serif;font-size:36px;font-weight:bold;color:${BRAND.gold};margin:16px 0 0;">${Math.round(r.overall ?? 0)}<span style="font-size:16px;color:#6b7480;">/100</span></p>
+    <p style="font-family:Arial,sans-serif;font-size:13px;text-transform:uppercase;letter-spacing:0.06em;color:${BRAND.navy};font-weight:bold;margin:4px 0 20px;">${escapeHtml(r.band || '')}${r.decision ? ' &middot; ' + escapeHtml(r.decision) : ''}</p>
+    <table style="border-collapse:collapse;width:100%;margin-bottom:20px;">${rows}</table>
+    ${lowest ? `<p><strong>Where to look first:</strong> ${escapeHtml(lowest.name)} scored lowest. A 90-day target that closes a quarter of the gap would be ${Math.round(lowest.liftTarget ?? ((lowest.score ?? 0) + 0.25 * (100 - (lowest.score ?? 0))))}.</p>` : ''}
+    <p>This is a self-described estimate from what you wrote, not a verified score. A paid InstitutionalOS Diagnostic verifies the evidence behind each dimension and ends with a written plan.</p>
+    <p style="margin:24px 0;">
+      <a href="${escapeHtml(r.continueUrl || 'https://calendly.com/fparham/30min')}" style="background:${BRAND.gold};color:${BRAND.navy};text-decoration:none;padding:12px 24px;border-radius:4px;font-family:Arial,sans-serif;font-weight:bold;font-size:14px;display:inline-block;">Talk Through This Result</a>
+    </p>
+    <p style="margin-top:28px;">In partnership,<br>Franklin D. Parham<br>Founder and Principal<br>Frankly Inspired and Associates, LLC</p>
+  `);
+  return { subject: 'Your InstitutionalOS Scorecard Result', html };
+}
+
+/** Sent to Franklin when a scorecard visitor leaves their email. */
+function scorecardLeadNotificationEmail(r, email, leadRef, osAdded) {
+  const dims = (r.dimensions || []).map(d => `${d.name}: ${Math.round(d.score ?? 0)}`).join(' · ');
+  const html = wrapEmail(`
+    <h1 style="font-size:18px;color:${BRAND.navy};margin:0 0 16px;">New scorecard lead</h1>
+    <p style="font-family:Arial,sans-serif;font-size:13px;"><strong>Email:</strong> ${escapeHtml(email)}</p>
+    ${r.orgName ? `<p style="font-family:Arial,sans-serif;font-size:13px;"><strong>Organization:</strong> ${escapeHtml(r.orgName)}</p>` : ''}
+    <p style="font-family:Arial,sans-serif;font-size:13px;"><strong>Stage:</strong> ${escapeHtml(r.stageName || r.stage || '')}</p>
+    <p style="font-family:Arial,sans-serif;font-size:13px;"><strong>Overall:</strong> ${Math.round(r.overall ?? 0)}/100 (${escapeHtml(r.band || '')})</p>
+    <p style="font-family:Arial,sans-serif;font-size:13px;"><strong>By dimension:</strong> ${escapeHtml(dims)}</p>
+    ${leadRefHtml(leadRef, osAdded)}
+  `);
+  return { subject: `New scorecard lead: ${r.orgName || email}`, html };
+}
+
 function escapeHtml(str) {
   if (str === undefined || str === null) return '';
   return String(str)
@@ -160,4 +203,6 @@ module.exports = {
   contactNotificationEmail,
   assessmentResultsEmail,
   assessmentLeadNotificationEmail,
+  scorecardResultsEmail,
+  scorecardLeadNotificationEmail,
 };

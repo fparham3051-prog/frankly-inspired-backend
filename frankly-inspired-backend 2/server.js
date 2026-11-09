@@ -29,6 +29,8 @@ const {
   contactNotificationEmail,
   assessmentResultsEmail,
   assessmentLeadNotificationEmail,
+  scorecardResultsEmail,
+  scorecardLeadNotificationEmail,
 } = require('./emailTemplates');
 const { generateAssessmentNarrative } = require('./aiNarrative');
 const { logAssessmentResponse, getBenchmarks, KNOWN_TOOLS } = require('./db');
@@ -92,6 +94,9 @@ app.use(['/api/contact', '/api/assessment-lead'], limiter);
 app.use('/api/', rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 60,
+  // Server-to-server calls from the scorecard all come from one address and
+  // are authenticated by a shared secret instead.
+  skip: (req) => req.path === '/scorecard-results',
   standardHeaders: true,
   legacyHeaders: false,
   message: { ok: false, error: 'Too many requests. Please try again later.' },
@@ -362,6 +367,61 @@ app.get('/api/benchmarks', async (req, res) => {
   res.json({ ok: true, benchmarks });
 });
  
+/* ------------------------------------------------------------------ */
+/* POST /api/scorecard-results                                         */
+/* Called by the InstitutionalOS scorecard service (not by browsers)   */
+/* when a visitor leaves their email after a result. Emails the visitor */
+/* their result and notifies Franklin. Requires the shared secret in    */
+/* SCORECARD_MAIL_SECRET (same value set on grantpass-backend).        */
+/* ------------------------------------------------------------------ */
+const SCORECARD_MAIL_SECRET = process.env.SCORECARD_MAIL_SECRET || '';
+app.post('/api/scorecard-results', async (req, res) => {
+  const provided = req.get('X-Scorecard-Secret') || '';
+  const ok = SCORECARD_MAIL_SECRET && provided.length === SCORECARD_MAIL_SECRET.length &&
+    crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(SCORECARD_MAIL_SECRET));
+  if (!ok) return res.status(401).json({ ok: false, error: 'unauthorized' });
+
+  const body = req.body || {};
+  if (!isValidEmail(body.email) || typeof body.overall !== 'number' || !Array.isArray(body.dimensions)) {
+    return res.status(400).json({ ok: false, error: 'email, overall and dimensions are required' });
+  }
+  const r = {
+    stage: String(body.stage || ''),
+    stageName: String(body.stageName || body.stage || ''),
+    overall: body.overall,
+    band: String(body.band || ''),
+    decision: String(body.decision || ''),
+    orgName: String(body.orgName || '').slice(0, 200),
+    continueUrl: /^https:\/\/franklyinspired\.associates\//.test(String(body.continueUrl || '')) ? body.continueUrl : 'https://franklyinspired.associates/#contact',
+    dimensions: body.dimensions.slice(0, 7).map(d => ({
+      name: String((d && d.name) || ''),
+      score: Number(d && d.score) || 0,
+      note: String((d && d.note) || '').slice(0, 300),
+      liftTarget: typeof (d && d.liftTarget) === 'number' ? d.liftTarget : undefined,
+    })),
+  };
+  const leadRef = typeof body.leadRef === 'string' ? body.leadRef.slice(0, 80) : '';
+  const osAdded = body.osAdded === true;
+
+  try {
+    const results = scorecardResultsEmail(r);
+    const notify = scorecardLeadNotificationEmail(r, body.email, leadRef, osAdded);
+    const notifyTargets = [TO_EMAIL, LEAD_COPY_EMAIL].filter(Boolean);
+    const sendResults = await Promise.all([
+      resend.emails.send({ from: FROM_EMAIL, to: body.email, subject: results.subject, html: results.html }),
+      ...notifyTargets.map(addr => resend.emails.send({
+        from: FROM_EMAIL, to: addr, replyTo: body.email, subject: notify.subject, html: notify.html,
+      })),
+    ]);
+    const visitorError = sendResults[0] && sendResults[0].error;
+    sendResults.forEach(x => { if (x && x.error) console.error('POST /api/scorecard-results: Resend error:', x.error); });
+    return res.json({ ok: !visitorError, emailed: !visitorError });
+  } catch (err) {
+    console.error('POST /api/scorecard-results failed:', err);
+    return res.status(502).json({ ok: false, error: 'Could not send email right now.' });
+  }
+});
+
 /* ------------------------------------------------------------------ */
 /* GET /api/giving-landscape                                           */
 /* Recent public major gifts from the operations app's Giving           */
