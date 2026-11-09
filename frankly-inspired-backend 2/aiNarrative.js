@@ -139,4 +139,55 @@ How to read these scores: each question was answered on an evidence scale, not a
   }
 }
 
-module.exports = { generateAssessmentNarrative, KNOWN_TOOLS: Object.keys(PROMPTS) };
+/**
+ * "Ask about your results": answers one question from a visitor about
+ * their own Health Index. Same guardrail as the narratives: the model sees
+ * only scores (and Seal level / stage if given), never anything about the
+ * organization, so it can't invent facts. Returns null on any failure.
+ */
+const ASK_PROMPT = `You answer questions from nonprofit leaders about their own InstitutionalOS Health Index results on the Frankly Inspired and Associates, LLC website.
+
+${VOICE_AND_CONSTRAINTS.split('Write exactly')[0]}
+The seven Health Index dimensions are Strategy and Positioning, Program and Impact Evidence, Revenue and Financial Health, Leadership and Organizational Capacity, Operations and Infrastructure, Partnerships and Ecosystem, and Governance and Risk. Scores use an evidence scale: 0% not in place, 25% talked about, 50% informal, 75% documented, 100% verified. They are self-reported.
+
+Candid's Seals of Transparency (Bronze, Silver, Gold, Platinum) are free, earned in order, and renewed yearly; Frankly Inspired points every organization toward Platinum and is not affiliated with Candid.
+
+Rules:
+- Answer the visitor's question directly in 3 to 6 sentences of plain prose. No lists, no headings.
+- Ground every point in their scores. If the question can't be answered from scores alone, say what would be needed.
+- Prefer one concrete next step they can take in the next 90 days.
+- Never give legal, accounting, tax, or investment advice; say a qualified professional should advise on those.
+- If asked about something unrelated to their organization's results or nonprofit strategy, politely say you can only help with their results.
+- Where it genuinely fits, you may note that the paid InstitutionalOS Diagnostic verifies the evidence behind scores; never push it more than once.`;
+
+async function answerQuestion({ question, scores, seal, stage }) {
+  if (!ANTHROPIC_API_KEY) return null;
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20000);
+    const response = await fetch(ANTHROPIC_API_URL, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({
+        model: ANTHROPIC_MODEL,
+        max_tokens: 450,
+        system: ASK_PROMPT,
+        messages: [{ role: 'user', content: JSON.stringify({ scores, candid_seal_now: seal || null, stage: stage || null, question }) }],
+      }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!response.ok) {
+      console.error('Anthropic API error (ask):', response.status, await response.text().catch(() => ''));
+      return null;
+    }
+    const data = await response.json();
+    const text = (data.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('').trim();
+    return text || null;
+  } catch (err) {
+    console.error('answerQuestion failed:', err.message);
+    return null;
+  }
+}
+
+module.exports = { generateAssessmentNarrative, answerQuestion, KNOWN_TOOLS: Object.keys(PROMPTS) };

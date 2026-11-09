@@ -80,6 +80,17 @@ if (DATABASE_URL) {
     -- InstitutionalOS evidence rubric (not in place ... verified). Benchmarks
     -- only compare responses given on the same scale.
     ALTER TABLE assessment_responses ADD COLUMN IF NOT EXISTS scale TEXT NOT NULL DEFAULT 'agreement';
+    -- Opt-in 90-day re-check reminders. One row per request; the row (and
+    -- with it the email address) is deleted as soon as the reminder is sent
+    -- or cancelled. Nothing else is ever sent to these addresses.
+    CREATE TABLE IF NOT EXISTS reminders (
+      id SERIAL PRIMARY KEY,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      email TEXT NOT NULL,
+      tool TEXT NOT NULL DEFAULT 'health-index',
+      due_at TIMESTAMPTZ NOT NULL,
+      token TEXT NOT NULL UNIQUE
+    );
   `).catch(err => {
     console.error('DB init failed — persistence disabled for this run:', err.message);
     pool = null;
@@ -176,4 +187,58 @@ async function getBenchmarks(tool, scale) {
   }
 }
 
-module.exports = { logAssessmentResponse, getBenchmarks, KNOWN_TOOLS };
+/** Total completed free-tool results (all tools, all scales), for the
+ *  homepage proof counter. Null when the database is unavailable. */
+async function countResponses() {
+  if (!pool) return null;
+  try {
+    await ready;
+    if (!pool) return null;
+    const { rows } = await withTimeout(pool.query('SELECT COUNT(*)::int AS n FROM assessment_responses'), 9000, 'countResponses');
+    return rows[0].n;
+  } catch (err) {
+    console.error('countResponses failed:', err.message);
+    return null;
+  }
+}
+
+/** Stores an opt-in re-check reminder. Returns the cancel token, or null. */
+async function addReminder({ email, tool, days }) {
+  if (!pool) return null;
+  try {
+    await ready;
+    if (!pool) return null;
+    const token = require('crypto').randomBytes(18).toString('base64url');
+    const safeTool = KNOWN_TOOLS.includes(tool) ? tool : 'health-index';
+    // One pending reminder per address and tool: a repeat request moves the date.
+    await withTimeout(pool.query('DELETE FROM reminders WHERE lower(email) = lower($1) AND tool = $2', [email, safeTool]), 9000, 'addReminder');
+    await withTimeout(pool.query(
+      "INSERT INTO reminders (email, tool, due_at, token) VALUES ($1, $2, now() + ($3 || ' days')::interval, $4)",
+      [email, safeTool, String(Math.max(1, Math.min(365, days || 90))), token]
+    ), 9000, 'addReminder');
+    return token;
+  } catch (err) {
+    console.error('addReminder failed:', err.message);
+    return null;
+  }
+}
+
+async function dueReminders(limit = 50) {
+  if (!pool) return [];
+  await ready;
+  if (!pool) return [];
+  const { rows } = await withTimeout(pool.query('SELECT id, email, tool, token FROM reminders WHERE due_at <= now() ORDER BY due_at LIMIT $1', [limit]), 9000, 'dueReminders');
+  return rows;
+}
+
+async function deleteReminder({ id, token }) {
+  if (!pool) return false;
+  await ready;
+  if (!pool) return false;
+  const r = id
+    ? await withTimeout(pool.query('DELETE FROM reminders WHERE id = $1', [id]), 9000, 'deleteReminder')
+    : await withTimeout(pool.query('DELETE FROM reminders WHERE token = $1', [token]), 9000, 'deleteReminder');
+  return r.rowCount > 0;
+}
+
+module.exports = { logAssessmentResponse, getBenchmarks, KNOWN_TOOLS, countResponses, addReminder, dueReminders, deleteReminder };

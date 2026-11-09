@@ -7,6 +7,8 @@
  * same content guardrails as the rest of the project.
  */
 
+const SITE = 'https://franklyinspired.associates';
+
 const BRAND = {
   navy: '#11233D',
   gold: '#B28E42',
@@ -37,7 +39,14 @@ function contactAcknowledgementEmail(fields) {
     <p style="margin:24px 0;">
       <a href="https://calendly.com/fparham/30min" style="background:${BRAND.gold};color:${BRAND.navy};text-decoration:none;padding:12px 24px;border-radius:4px;font-family:Arial,sans-serif;font-weight:bold;font-size:14px;display:inline-block;">Schedule a Conversation</a>
     </p>
-    <p>I look forward to learning more about your organization, your goals, and what a useful engagement could look like.</p>
+    <h2 style="font-size:16px;color:${BRAND.navy};margin:28px 0 8px;">Before we talk (optional, about 15 minutes)</h2>
+    <p style="margin:0 0 8px;">If you'd like our first conversation to go straight to what matters, these three things help most:</p>
+    <ol style="margin:0 0 16px 18px;padding:0;">
+      <li style="margin-bottom:6px;"><a href="${SITE}/assessment" style="color:${BRAND.navy};">Take the free 7-minute self-assessment</a>. It builds your Health Index across all seven dimensions; bring it or email it to me.</li>
+      <li style="margin-bottom:6px;">Have these on hand if they exist: your latest filed Form 990, this year's budget, your bylaws, and any strategic plan.</li>
+      <li style="margin-bottom:6px;"><a href="${SITE}/candid-seal" style="color:${BRAND.navy};">Check your Candid Seal path</a>, so we know where your public profile stands.</li>
+    </ol>
+    <p>None of this is required. I look forward to learning more about your organization, your goals, and what a useful engagement could look like.</p>
     <p style="margin-top:28px;">In partnership,<br>Franklin D. Parham<br>Founder and Principal<br>Frankly Inspired and Associates, LLC</p>
   `);
   return {
@@ -202,7 +211,25 @@ function escapeHtml(str) {
     .replace(/'/g, '&#039;');
 }
 
+/** The one opt-in 90-day re-check reminder. Sent once; the address is
+ *  deleted from the reminders table as soon as it goes out. */
+function recheckReminderEmail({ toolName }) {
+  const html = wrapEmail(`
+    <h1 style="font-size:20px;color:${BRAND.navy};margin:0 0 20px;">Time for your 90-day re-check</h1>
+    <p>Ninety days ago you scored your organization with the ${escapeHtml(toolName || 'InstitutionalOS Health Index')} and asked for a reminder to check again.</p>
+    <p>Retake the tools in the same browser you used last time, and your Health Index will show exactly which dimensions moved, and whether your Candid Seal level changed.</p>
+    <p style="margin:24px 0;">
+      <a href="${SITE}/health-index" style="background:${BRAND.gold};color:${BRAND.navy};text-decoration:none;padding:12px 24px;border-radius:4px;font-family:Arial,sans-serif;font-weight:bold;font-size:14px;display:inline-block;">See Your Health Index</a>
+    </p>
+    <p>If progress has stalled on your likely constraint, a 30-minute conversation is often the fastest way to find out why: <a href="https://calendly.com/fparham/30min" style="color:${BRAND.navy};">schedule a time</a>.</p>
+    <p style="margin-top:28px;">In partnership,<br>Franklin D. Parham<br>Founder and Principal<br>Frankly Inspired and Associates, LLC</p>
+    <p style="font-family:Arial,sans-serif;font-size:11px;color:#6b7480;margin-top:24px;">This is the one reminder you asked for; your address has now been deleted from our reminder list. You won't get any other emails from it.</p>
+  `);
+  return { subject: 'Your 90-day Health Index re-check', html };
+}
+
 module.exports = {
+  recheckReminderEmail,
   contactAcknowledgementEmail,
   contactNotificationEmail,
   assessmentResultsEmail,

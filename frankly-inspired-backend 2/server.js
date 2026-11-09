@@ -31,9 +31,10 @@ const {
   assessmentLeadNotificationEmail,
   scorecardResultsEmail,
   scorecardLeadNotificationEmail,
+  recheckReminderEmail,
 } = require('./emailTemplates');
-const { generateAssessmentNarrative } = require('./aiNarrative');
-const { logAssessmentResponse, getBenchmarks, KNOWN_TOOLS } = require('./db');
+const { generateAssessmentNarrative, answerQuestion } = require('./aiNarrative');
+const { logAssessmentResponse, getBenchmarks, KNOWN_TOOLS, countResponses, addReminder, dueReminders, deleteReminder } = require('./db');
 const { makeScoreRef, verifyScoreRef } = require('./scoreRef');
 const { pushProspect, getGivingLandscape, osConfigured } = require('./osClient');
 const { mapToHealthIndex, formatHealthIndex } = require('./healthIndex');
@@ -115,7 +116,16 @@ const limiter = rateLimit({
 // benchmark calls fire automatically on every tool result, so sharing one
 // 5-per-15-minutes budget with them meant a visitor who finished two tools
 // and then tried to email results or contact Franklin could be blocked.
-app.use(['/api/contact', '/api/assessment-lead'], limiter);
+app.use(['/api/contact', '/api/assessment-lead', '/api/reminders'], limiter);
+// The results assistant calls the AI model, so it gets its own budget:
+// 10 questions per visitor per 15 minutes.
+app.use('/api/ask', rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { ok: false, error: 'You\'ve asked a lot of questions in a short time. Please try again in a few minutes.' },
+}));
 app.use('/api/', rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 60,
@@ -254,6 +264,88 @@ app.post('/api/contact', async (req, res) => {
 /* ------------------------------------------------------------------ */
 /* POST /api/assessment-lead                                           */
 /* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
+/* GET /api/stats: homepage proof counter. Free-tool results logged here */
+/* plus InstitutionalOS scorecard results, cached for an hour. Counts    */
+/* only, nothing about any visitor.                                      */
+/* ------------------------------------------------------------------ */
+const GRANTPASS_API = (process.env.GRANTPASS_API_URL || 'https://grantpass-backend.onrender.com').replace(/\/+$/, '');
+let statsCache = { at: 0, data: null };
+app.get('/api/stats', async (req, res) => {
+  if (!statsCache.data || Date.now() - statsCache.at > 60 * 60 * 1000) {
+    const [own, scorecard] = await Promise.all([
+      countResponses(),
+      fetch(GRANTPASS_API + '/demo/benchmarks', { signal: AbortSignal.timeout(8000) })
+        .then((r) => (r.ok ? r.json() : null)).then((d) => (d && Number.isFinite(d.count) ? d.count : null)).catch(() => null),
+    ]);
+    const parts = [own, scorecard].filter((n) => typeof n === 'number');
+    if (parts.length) statsCache = { at: Date.now(), data: { assessments: parts.reduce((a, b) => a + b, 0) } };
+  }
+  res.set('Cache-Control', 'public, max-age=600');
+  res.json({ ok: true, ...(statsCache.data || { assessments: null }) });
+});
+
+/* ------------------------------------------------------------------ */
+/* POST /api/ask: "Ask about your results" on the Health Index page.    */
+/* Body: {question, scores:[{label,pct}], seal?, stage?}. Scores only;  */
+/* nothing is stored.                                                   */
+/* ------------------------------------------------------------------ */
+app.post('/api/ask', async (req, res) => {
+  const b = req.body || {};
+  const question = typeof b.question === 'string' ? b.question.trim().slice(0, 500) : '';
+  const scores = Array.isArray(b.scores)
+    ? b.scores.filter((s) => s && typeof s.label === 'string' && Number.isFinite(s.pct)).slice(0, 12)
+        .map((s) => ({ dimension: s.label.slice(0, 60), score_pct: Math.max(0, Math.min(100, Math.round(s.pct))) }))
+    : [];
+  if (question.length < 3) return res.status(400).json({ ok: false, error: 'Please type a question.' });
+  if (!scores.length) return res.status(400).json({ ok: false, error: 'Score at least one dimension first.' });
+  const seal = ['bronze', 'silver', 'gold', 'platinum'].includes(b.seal) ? b.seal : null;
+  const stage = STAGE_LABELS[b.stage] ? b.stage : null;
+  const answer = await answerQuestion({ question, scores, seal, stage });
+  if (!answer) return res.status(503).json({ ok: false, error: 'The assistant is unavailable right now. Please try again, or schedule a conversation.' });
+  res.json({ ok: true, answer });
+});
+
+/* ------------------------------------------------------------------ */
+/* Opt-in 90-day re-check reminder.                                     */
+/*   POST /api/reminders {email, tool}  -> one reminder in 90 days      */
+/*   GET  /api/reminders/cancel?token=  -> deletes it                   */
+/*   POST /api/admin/send-reminders     -> sends due ones (daily task,  */
+/*        X-Reminder-Secret header must match REMINDER_SECRET)          */
+/* ------------------------------------------------------------------ */
+const REMINDER_SECRET = process.env.REMINDER_SECRET || '';
+const PUBLIC_API = (process.env.PUBLIC_API_URL || 'https://frankly-inspired-api.onrender.com').replace(/\/+$/, '');
+app.post('/api/reminders', async (req, res) => {
+  const b = req.body || {};
+  if (b.hp_field) return res.json({ ok: true });
+  if (!isValidEmail(b.email)) return res.status(400).json({ ok: false, error: 'Please provide a valid email address.' });
+  const token = await addReminder({ email: String(b.email).trim(), tool: b.tool, days: 90 });
+  if (!token) return res.status(503).json({ ok: false, error: 'Reminders are unavailable right now. Please try again later.' });
+  res.json({ ok: true, cancelUrl: `${PUBLIC_API}/api/reminders/cancel?token=${token}` });
+});
+app.get('/api/reminders/cancel', async (req, res) => {
+  const token = String(req.query.token || '');
+  const done = /^[A-Za-z0-9_-]{10,64}$/.test(token) ? await deleteReminder({ token }).catch(() => false) : false;
+  res.type('html').send(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Reminder cancelled</title><body style="font-family:Arial,sans-serif;max-width:520px;margin:60px auto;padding:0 16px;color:#1f2933"><h1 style="font-size:20px;color:#0f1f3d">${done ? 'Reminder cancelled' : 'Nothing to cancel'}</h1><p>${done ? 'Your 90-day reminder and email address have been deleted.' : 'This reminder was already sent or cancelled.'}</p><p><a href="https://franklyinspired.associates/health-index">Back to your Health Index</a></p></body>`);
+});
+app.post('/api/admin/send-reminders', async (req, res) => {
+  if (!REMINDER_SECRET || req.get('X-Reminder-Secret') !== REMINDER_SECRET) return res.status(401).json({ ok: false });
+  let sent = 0, failed = 0;
+  try {
+    for (const r of await dueReminders(50)) {
+      const mail = recheckReminderEmail({ toolName: TOOL_DISPLAY_NAMES[r.tool] || 'InstitutionalOS Health Index' });
+      const out = await resend.emails.send({ from: FROM_EMAIL, to: r.email, subject: mail.subject, html: mail.html }).catch((e) => ({ error: e }));
+      if (out && out.error) { failed++; console.error('reminder send failed:', out.error); continue; }
+      await deleteReminder({ id: r.id });
+      sent++;
+    }
+  } catch (err) {
+    console.error('send-reminders failed:', err.message);
+    return res.status(500).json({ ok: false, sent, failed });
+  }
+  res.json({ ok: true, sent, failed });
+});
+
 app.post('/api/assessment-lead', async (req, res) => {
   const body = req.body || {};
  
@@ -270,6 +362,8 @@ app.post('/api/assessment-lead', async (req, res) => {
  
   const tool = KNOWN_TOOLS.includes(body.tool) ? body.tool : 'self-assessment';
   const healthIndex = mapToHealthIndex(tool, body.pillarScores);
+  // Opt-in: one 90-day re-check reminder, stored until it's sent.
+  const reminderToken = body.remind === true ? await addReminder({ email: String(body.email).trim(), tool, days: 90 }) : null;
   const payload = {
     email: body.email,
     scorePct: body.scorePct,
@@ -334,7 +428,7 @@ app.post('/api/assessment-lead', async (req, res) => {
       if (r && r.error) console.error('POST /api/assessment-lead: Resend reported a delivery error:', r.error);
     });
  
-    return res.json({ ok: true });
+    return res.json({ ok: true, reminder: Boolean(reminderToken), cancelUrl: reminderToken ? `${PUBLIC_API}/api/reminders/cancel?token=${reminderToken}` : undefined });
   } catch (err) {
     console.error('POST /api/assessment-lead failed:', err);
     return res.status(502).json({ ok: false, error: 'Could not send email right now. Please try again shortly.' });
