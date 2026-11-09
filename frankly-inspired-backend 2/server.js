@@ -56,6 +56,14 @@ const LEAD_COPY_EMAIL = process.env.LEAD_COPY_EMAIL || 'fparham3051@gmail.com';
 // naturally ("Continuing from your Revenue & Growth scorecard: 62/100")
 // even though these tools don't have an InstitutionalOS BUILD/FUND/SUSTAIN
 // stage of their own.
+// Stage the visitor picked in the tool's results (Build / Fund / Sustain),
+// which decides which diagnostic fits.
+const STAGE_LABELS = {
+  build: 'Build (Formation Readiness, $2,000 diagnostic)',
+  fund: 'Fund (Grant Readiness, $2,500 diagnostic)',
+  sustain: 'Sustain (Institutional Durability, $2,500 diagnostic)',
+};
+
 const TOOL_DISPLAY_NAMES = {
   'self-assessment': 'Sustainability Self-Assessment',
   'revenue-growth': 'Revenue & Growth',
@@ -249,11 +257,13 @@ app.post('/api/assessment-lead', async (req, res) => {
     tool,
     toolName: TOOL_DISPLAY_NAMES[tool] || 'Sustainability Self-Assessment',
     healthIndex,
+    stage: STAGE_LABELS[body.stage] || '',
   };
 
   const leadRef = 'web-tool-' + crypto.randomUUID();
   const toolNotes = [
     `Tool: ${payload.toolName}`,
+    payload.stage && `Stage: ${payload.stage}`,
     `Composite score: ${Math.round(payload.scorePct)}%${payload.band ? ' (' + payload.band + ')' : ''}`,
     'By area: ' + payload.pillarScores.map(p => `${p.label} ${Math.round(p.pct)}%`).join(', '),
     formatHealthIndex(healthIndex),
