@@ -21,7 +21,7 @@ function osConfigured() {
 }
 
 /**
- * @param {{name:string, org?:string, source:string, notes?:string, link?:string, sourceRef:string}} lead
+ * @param {{name:string, org?:string, source:string, notes?:string, link?:string, sourceRef:string, interest?:string, orgStage?:string}} lead
  * @returns {Promise<boolean>} true if the app confirmed it (created or already present)
  */
 async function pushProspect(lead) {
@@ -41,6 +41,8 @@ async function pushProspect(lead) {
           link: lead.link || '',
           notes: lead.notes || '',
           sourceRef: lead.sourceRef,
+          interest: lead.interest || '',
+          orgStage: lead.orgStage || '',
         }],
       }),
       signal: controller.signal,

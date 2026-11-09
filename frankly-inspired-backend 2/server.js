@@ -59,6 +59,20 @@ const LEAD_COPY_EMAIL = process.env.LEAD_COPY_EMAIL || 'fparham3051@gmail.com';
 // stage of their own.
 // Stage the visitor picked in the tool's results (Build / Fund / Sustain),
 // which decides which diagnostic fits.
+// Offer keys shared with the operations app (FIOS OFFERING_LABELS and
+// pipeline tracks). The site's contact checkboxes map onto them so a lead
+// arrives with the offer it asked about, and promoting it to Pipeline sets
+// the right track and Diagnostic stage automatically.
+const SUPPORT_AREA_TO_INTEREST = {
+  'InstitutionalOS Diagnostic': 'institutionalos-diagnostic',
+  'Advisory and Implementation Retainer': 'retainer',
+  'Ongoing Advisory and Implementation': 'retainer', // older form label
+  'Project Based Engagement': 'project',
+  '1:1 Executive Coaching': 'coaching',
+  'Speaking and Board Service': 'speaking',
+};
+const STAGE_FROM_SCORE = { BUILD: 'build', FUND: 'fund', SUSTAIN: 'sustain' };
+
 const STAGE_LABELS = {
   build: 'Build (Formation Readiness, $2,000 diagnostic)',
   fund: 'Fund (Grant Readiness, $2,500 diagnostic)',
@@ -184,12 +198,17 @@ app.post('/api/contact', async (req, res) => {
     scoreContext && `Arrived from ${scoreContext.stage || 'a free tool'}: ${scoreContext.score != null ? scoreContext.score + '/100' : ''} ${scoreContext.band ? '(' + scoreContext.band + ')' : ''}`.trim(),
     `Challenge: ${String(fields.challenge || '').trim()}`,
   ].filter(Boolean).join('\n');
+  const interest = supportArea.map((a) => SUPPORT_AREA_TO_INTEREST[a]).find(Boolean) || '';
+  const orgStage = STAGE_LABELS[body.stage] ? body.stage
+    : (scoreContext && STAGE_FROM_SCORE[String(scoreContext.stage || '').toUpperCase()]) || '';
   const osAdded = await pushProspect({
     name: String(fields.name).trim(),
     org: String(fields.organization || '').trim(),
     source: 'website contact form',
-    notes: contactNotes,
+    notes: contactNotes + (orgStage ? `\nStage: ${STAGE_LABELS[orgStage]}` : ''),
     sourceRef: leadRef,
+    interest,
+    orgStage,
   });
 
   try {
@@ -283,6 +302,11 @@ app.post('/api/assessment-lead', async (req, res) => {
     source: 'assessment tool',
     notes: toolNotes,
     sourceRef: leadRef,
+    // Every tool's results recommend the InstitutionalOS Diagnostic for
+    // the visitor's stage, so that's the offer a tool lead is about.
+    interest: 'institutionalos-diagnostic',
+    orgStage: STAGE_LABELS[body.stage] ? body.stage : '',
+    link: payload.org ? `https://projects.propublica.org/nonprofits/organizations/${payload.org.ein.replace('-', '')}` : '',
   });
 
   try {
