@@ -32,9 +32,11 @@ const {
   scorecardResultsEmail,
   scorecardLeadNotificationEmail,
   recheckReminderEmail,
+  feedbackNotificationEmail,
+  feedbackThanksEmail,
 } = require('./emailTemplates');
 const { generateAssessmentNarrative, answerQuestion } = require('./aiNarrative');
-const { logAssessmentResponse, getBenchmarks, KNOWN_TOOLS, countResponses, addReminder, dueReminders, deleteReminder } = require('./db');
+const { addFeedback, logAssessmentResponse, getBenchmarks, KNOWN_TOOLS, countResponses, addReminder, dueReminders, deleteReminder } = require('./db');
 const { makeScoreRef, verifyScoreRef } = require('./scoreRef');
 const { pushProspect, getGivingLandscape, osConfigured } = require('./osClient');
 const { mapToHealthIndex, formatHealthIndex } = require('./healthIndex');
@@ -261,6 +263,49 @@ app.post('/api/contact', async (req, res) => {
   }
 });
  
+/* ------------------------------------------------------------------ */
+/* POST /api/feedback: client testimonial and results form (/feedback). */
+/* Saved, emailed to Franklin with a ready-to-paste site entry when the */
+/* client gave permission, and acknowledged to the client.              */
+/* ------------------------------------------------------------------ */
+app.post('/api/feedback', async (req, res) => {
+  const body = req.body || {};
+  if (body.hp_field) return res.json({ ok: true });
+  const clip = (v, n) => String(v || '').trim().slice(0, n);
+  const f = {
+    name: clip(body.name, 120),
+    email: clip(body.email, 200),
+    role: clip(body.role, 120),
+    organization: clip(body.organization, 200),
+    result: clip(body.result, 2000),
+    quote: clip(body.quote, 1200),
+    permission: ['named', 'anonymous', 'private'].includes(body.permission) ? body.permission : 'private',
+  };
+  const rating = Number(body.rating);
+  f.rating = Number.isInteger(rating) && rating >= 0 && rating <= 10 ? rating : null;
+  if (!f.name || !isValidEmail(f.email)) {
+    return res.status(400).json({ ok: false, error: 'Please add your name and a valid email address.' });
+  }
+  if (!f.result && !f.quote) {
+    return res.status(400).json({ ok: false, error: 'Please tell us a little about how it went.' });
+  }
+  const id = await addFeedback(f);
+  try {
+    const note = feedbackNotificationEmail(f, id);
+    const thanks = feedbackThanksEmail(f);
+    const targets = [TO_EMAIL, LEAD_COPY_EMAIL].filter(Boolean);
+    const results = await Promise.all([
+      ...targets.map((to) => resend.emails.send({ from: FROM_EMAIL, to, replyTo: f.email, subject: note.subject, html: note.html })),
+      resend.emails.send({ from: FROM_EMAIL, to: f.email, subject: thanks.subject, html: thanks.html }),
+    ]);
+    results.forEach((r) => { if (r && r.error) console.error('POST /api/feedback: Resend error:', r.error); });
+  } catch (err) {
+    console.error('POST /api/feedback email failed:', err);
+    if (!id) return res.status(502).json({ ok: false, error: 'Could not send right now. Please try again, or email franklin@franklyinspired.associates.' });
+  }
+  return res.json({ ok: true });
+});
+
 /* ------------------------------------------------------------------ */
 /* POST /api/assessment-lead                                           */
 /* ------------------------------------------------------------------ */

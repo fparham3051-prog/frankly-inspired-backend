@@ -91,6 +91,21 @@ if (DATABASE_URL) {
       due_at TIMESTAMPTZ NOT NULL,
       token TEXT NOT NULL UNIQUE
     );
+    -- Client feedback from /feedback. "permission" is what the client
+    -- allowed: 'named' (quote with name and organization), 'anonymous'
+    -- (quote with role only), or 'private' (never published).
+    CREATE TABLE IF NOT EXISTS feedback (
+      id SERIAL PRIMARY KEY,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      name TEXT NOT NULL,
+      email TEXT NOT NULL,
+      role TEXT,
+      organization TEXT,
+      rating INTEGER,
+      result TEXT,
+      quote TEXT,
+      permission TEXT NOT NULL DEFAULT 'private'
+    );
   `).catch(err => {
     console.error('DB init failed — persistence disabled for this run:', err.message);
     pool = null;
@@ -241,4 +256,20 @@ async function deleteReminder({ id, token }) {
   return r.rowCount > 0;
 }
 
-module.exports = { logAssessmentResponse, getBenchmarks, KNOWN_TOOLS, countResponses, addReminder, dueReminders, deleteReminder };
+/** Stores one feedback submission. Returns the new id, or null if the DB is off. */
+async function addFeedback(f) {
+  if (!pool) return null;
+  try {
+    if (ready) await withTimeout(ready, 6000, 'DB init');
+    const r = await withTimeout(pool.query(
+      'INSERT INTO feedback (name, email, role, organization, rating, result, quote, permission) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id',
+      [f.name, f.email, f.role || null, f.organization || null, f.rating, f.result || null, f.quote || null, f.permission]
+    ), 6000, 'feedback insert');
+    return r.rows[0].id;
+  } catch (err) {
+    console.error('addFeedback failed:', err.message);
+    return null;
+  }
+}
+
+module.exports = { addFeedback, logAssessmentResponse, getBenchmarks, KNOWN_TOOLS, countResponses, addReminder, dueReminders, deleteReminder };

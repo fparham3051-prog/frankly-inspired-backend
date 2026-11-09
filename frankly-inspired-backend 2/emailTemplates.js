@@ -228,7 +228,56 @@ function recheckReminderEmail({ toolName }) {
   return { subject: 'Your 90-day Health Index re-check', html };
 }
 
+const PERMISSION_LABELS = {
+  named: 'Yes, with my name and organization',
+  anonymous: 'Yes, anonymously (role only)',
+  private: 'No, for Franklin only',
+};
+
+/** Sent to Franklin when a client submits /feedback. Includes a ready-to-paste
+ * entry for src/data/proof.ts when the client allowed publishing. */
+function feedbackNotificationEmail(f, id) {
+  const js = (v) => JSON.stringify(String(v || ''));
+  let snippet = '';
+  if (f.permission !== 'private' && f.quote) {
+    snippet = f.permission === 'named'
+      ? `{ quote: ${js(f.quote)}, name: ${js(f.name)}, role: ${js(f.role)}, org: ${js(f.organization)} },`
+      : `{ quote: ${js(f.quote)}, role: ${js(f.role || 'Nonprofit leader')} },`;
+  }
+  const row = (label, value) => value ? `<tr><td style="padding:6px 12px 6px 0;color:#6b7480;font-family:Arial,sans-serif;font-size:13px;vertical-align:top;white-space:nowrap;">${escapeHtml(label)}</td><td style="padding:6px 0;font-family:Arial,sans-serif;font-size:14px;">${escapeHtml(value)}</td></tr>` : '';
+  const html = wrapEmail(`
+    <h2 style="color:${BRAND.navy};margin:0 0 12px;">New client feedback${f.rating != null ? ` (${f.rating}/10)` : ''}</h2>
+    <table style="border-collapse:collapse;">
+      ${row('From', `${f.name}${f.role ? ', ' + f.role : ''}`)}
+      ${row('Organization', f.organization)}
+      ${row('Email', f.email)}
+      ${row('Would recommend', f.rating != null ? `${f.rating} out of 10` : '')}
+      ${row('What changed', f.result)}
+      ${row('Testimonial', f.quote)}
+      ${row('Permission to publish', PERMISSION_LABELS[f.permission])}
+    </table>
+    ${snippet ? `<p style="font-family:Arial,sans-serif;font-size:13px;margin:20px 0 6px;"><strong>To put this on the site</strong>, add this line to the <code>testimonials</code> list in <code>src/data/proof.ts</code> (or ask Claude to):</p>
+    <pre style="background:${BRAND.lightGray};padding:12px;font-size:12px;white-space:pre-wrap;word-break:break-word;">${escapeHtml(snippet)}</pre>` : '<p style="font-family:Arial,sans-serif;font-size:13px;margin-top:18px;">Not for publishing.</p>'}
+    <p style="font-family:Arial,sans-serif;font-size:11px;color:#6b7480;margin-top:20px;">Feedback #${escapeHtml(String(id || 'not saved'))}</p>
+  `);
+  return { subject: `Client feedback: ${f.organization || f.name}${f.permission !== 'private' ? ' (OK to publish)' : ''}`, html };
+}
+
+/** Sent to the client after they submit /feedback. */
+function feedbackThanksEmail(f) {
+  const first = String(f.name || '').trim().split(/\s+/)[0] || 'there';
+  const html = wrapEmail(`
+    <p>Hi ${escapeHtml(first)},</p>
+    <p>Thank you for taking the time to share how our work together went. It genuinely helps.</p>
+    ${f.permission === 'private' ? '<p>As you asked, what you wrote stays between us.</p>' : `<p>You said we may share your words ${f.permission === 'named' ? 'with your name and organization' : 'anonymously, with your role only'}. If you ever want to change that or take it down, just reply to this email.</p>`}
+    <p style="margin-top:28px;">In partnership,<br>Franklin D. Parham<br>Founder and Principal<br>Frankly Inspired and Associates, LLC</p>
+  `);
+  return { subject: 'Thank you for your feedback', html };
+}
+
 module.exports = {
+  feedbackNotificationEmail,
+  feedbackThanksEmail,
   recheckReminderEmail,
   contactAcknowledgementEmail,
   contactNotificationEmail,
