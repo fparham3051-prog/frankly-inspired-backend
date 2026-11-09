@@ -27,6 +27,8 @@ const MAP = {
     'Leadership & Organizational Development': 'Leadership and Organizational Capacity',
     'Operations & Infrastructure': 'Operations and Infrastructure',
     'Partnership & Ecosystem Strategy': 'Partnerships and Ecosystem',
+    'Program & Impact Evidence': 'Program and Impact Evidence',
+    'Governance & Risk': 'Governance and Risk',
   },
   'revenue-growth': {
     'Operating Reserve': 'Revenue and Financial Health',

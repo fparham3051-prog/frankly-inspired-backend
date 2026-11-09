@@ -329,11 +329,13 @@ app.post('/api/assessment-narrative', async (req, res) => {
  
   const tool = KNOWN_TOOLS.includes(body.tool) ? body.tool : 'self-assessment';
  
+  const scale = body.scale === 'evidence' ? 'evidence' : 'agreement';
   const narrative = await generateAssessmentNarrative({
     tool,
     scorePct: body.scorePct,
     band: typeof body.band === 'string' ? body.band : '',
     pillarScores: body.pillarScores,
+    scale,
   });
  
   // Anonymized log for the benchmark dataset — no email, no org, just the
@@ -344,6 +346,7 @@ app.post('/api/assessment-narrative', async (req, res) => {
     scorePct: body.scorePct,
     band: typeof body.band === 'string' ? body.band : '',
     pillarScores: body.pillarScores,
+    scale,
   });
  
   // Signed score_ref token, same mechanism the InstitutionalOS scorecard
@@ -373,7 +376,8 @@ app.post('/api/assessment-narrative', async (req, res) => {
 /* ------------------------------------------------------------------ */
 app.get('/api/benchmarks', async (req, res) => {
   const tool = KNOWN_TOOLS.includes(req.query.tool) ? req.query.tool : 'self-assessment';
-  const benchmarks = await getBenchmarks(tool);
+  // scale=evidence compares only answers given on the evidence rubric.
+  const benchmarks = await getBenchmarks(tool, req.query.scale);
   res.json({ ok: true, benchmarks });
 });
  

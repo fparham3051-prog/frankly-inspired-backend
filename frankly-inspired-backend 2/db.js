@@ -73,6 +73,11 @@ if (DATABASE_URL) {
       pillar_scores JSONB NOT NULL
     );
     ALTER TABLE assessment_responses ADD COLUMN IF NOT EXISTS tool TEXT NOT NULL DEFAULT 'self-assessment';
+    -- Answer scale the response was given on. 'agreement' = the original
+    -- "how true is this" scale (all rows before Nov 2026); 'evidence' = the
+    -- InstitutionalOS evidence rubric (not in place ... verified). Benchmarks
+    -- only compare responses given on the same scale.
+    ALTER TABLE assessment_responses ADD COLUMN IF NOT EXISTS scale TEXT NOT NULL DEFAULT 'agreement';
   `).catch(err => {
     console.error('DB init failed — persistence disabled for this run:', err.message);
     pool = null;
@@ -101,15 +106,15 @@ function withTimeout(promise, ms, label) {
  * blocks the caller, and never affects what the visitor sees — a DB outage
  * should never break any assessment.
  */
-async function logAssessmentResponse({ tool, scorePct, band, pillarScores }) {
+async function logAssessmentResponse({ tool, scorePct, band, pillarScores, scale }) {
   if (!pool) return;
   const safeTool = KNOWN_TOOLS.includes(tool) ? tool : 'self-assessment';
   try {
     if (ready) await withTimeout(ready, 6000, 'DB init');
     await withTimeout(
       pool.query(
-        'INSERT INTO assessment_responses (tool, score_pct, band, pillar_scores) VALUES ($1, $2, $3, $4)',
-        [safeTool, scorePct, band || null, JSON.stringify(pillarScores)]
+        'INSERT INTO assessment_responses (tool, score_pct, band, pillar_scores, scale) VALUES ($1, $2, $3, $4, $5)',
+        [safeTool, scorePct, band || null, JSON.stringify(pillarScores), scale === 'evidence' ? 'evidence' : 'agreement']
       ),
       6000,
       'insert assessment response'
@@ -126,15 +131,16 @@ async function logAssessmentResponse({ tool, scorePct, band, pillarScores }) {
  * configured, if there's nothing logged yet for this tool, or if the
  * database doesn't respond in time.
  */
-async function getBenchmarks(tool) {
+async function getBenchmarks(tool, scale) {
   if (!pool) return null;
   const safeTool = KNOWN_TOOLS.includes(tool) ? tool : 'self-assessment';
+  const safeScale = scale === 'evidence' ? 'evidence' : 'agreement';
   try {
     if (ready) await withTimeout(ready, 6000, 'DB init');
     const countResult = await withTimeout(
       pool.query(
-        'SELECT COUNT(*)::int AS count, AVG(score_pct)::float AS avg_score FROM assessment_responses WHERE tool = $1',
-        [safeTool]
+        'SELECT COUNT(*)::int AS count, AVG(score_pct)::float AS avg_score FROM assessment_responses WHERE tool = $1 AND scale = $2',
+        [safeTool, safeScale]
       ),
       6000,
       'count query'
@@ -147,11 +153,11 @@ async function getBenchmarks(tool) {
         `
         SELECT pillar->>'label' AS label, AVG((pillar->>'pct')::float) AS avg_pct
         FROM assessment_responses, jsonb_array_elements(pillar_scores) AS pillar
-        WHERE tool = $1
+        WHERE tool = $1 AND scale = $2
         GROUP BY pillar->>'label'
         ORDER BY label
       `,
-        [safeTool]
+        [safeTool, safeScale]
       ),
       6000,
       'pillar query'

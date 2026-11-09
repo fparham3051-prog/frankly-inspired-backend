@@ -43,7 +43,7 @@ const PROMPTS = {
 
 ${VOICE_AND_CONSTRAINTS}
 
-You are given five pillar scores (0-100%) covering strategy, revenue, leadership, operations, and partnerships, plus a composite score.`,
+You are given pillar scores (0-100%) covering strategy, program and impact evidence, revenue, leadership, operations, partnerships, and governance and risk, plus a composite score. Older results may include only the first five.`,
 
   'revenue-growth': `You write short, personalized result summaries for the "Revenue & Growth Score," a free financial diagnostic on the Frankly Inspired and Associates, LLC website. It scores five real financial ratios computed from a visitor's own budget figures — operating reserve depth (benchmarked against NORI and Propel Nonprofits guidance), program expense ratio (BBB Wise Giving Alliance / Charity Navigator), revenue concentration risk, current-ratio liquidity, and donor retention rate (the AFP/GivingTuesday Fundraising Effectiveness Project).
 
@@ -80,7 +80,12 @@ async function generateAssessmentNarrative(data) {
     return null;
   }
 
-  const systemPrompt = PROMPTS[data.tool] || PROMPTS['self-assessment'];
+  // On the evidence rubric a score describes how established a practice is,
+  // not how much the visitor agrees with a statement; say so to the model.
+  const EVIDENCE_NOTE = `
+
+How to read these scores: each question was answered on an evidence scale, not an agreement scale. 0% means "not in place", 25% "talked about", 50% "happens informally", 75% "documented and in use", and 100% "verified and routine". Describe areas in those terms (for example, "informal rather than documented"), and remember these are self-reported, not verified.`;
+  const systemPrompt = (PROMPTS[data.tool] || PROMPTS['self-assessment']) + (data.scale === 'evidence' ? EVIDENCE_NOTE : '');
 
   const userContent = JSON.stringify({
     composite_score_pct: Math.round(data.scorePct),
