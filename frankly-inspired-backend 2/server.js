@@ -36,7 +36,7 @@ const {
   feedbackThanksEmail,
 } = require('./emailTemplates');
 const { generateAssessmentNarrative, answerQuestion } = require('./aiNarrative');
-const { addFeedback, logAssessmentResponse, getBenchmarks, KNOWN_TOOLS, countResponses, addReminder, dueReminders, deleteReminder } = require('./db');
+const { durabilityRows, addFeedback, logAssessmentResponse, getBenchmarks, KNOWN_TOOLS, countResponses, addReminder, dueReminders, deleteReminder } = require('./db');
 const { makeScoreRef, verifyScoreRef } = require('./scoreRef');
 const { pushProspect, getGivingLandscape, osConfigured } = require('./osClient');
 const { mapToHealthIndex, formatHealthIndex } = require('./healthIndex');
@@ -75,6 +75,15 @@ const SUPPORT_AREA_TO_INTEREST = {
   'Speaking and Board Service': 'speaking',
 };
 const STAGE_FROM_SCORE = { BUILD: 'build', FUND: 'fund', SUSTAIN: 'sustain' };
+// "What's happening right now?" on every free tool (website src/scripts/trigger.ts).
+const TRIGGER_LABELS = {
+  expansion: 'Adding a site, city, or major program (Expansion Readiness)',
+  funder: 'Going after bigger funding, or a major grant is ending (Funder Readiness)',
+  founder: 'Too much depends on one leader (Founder Dependence)',
+  strain: 'Growing, but staff and systems are stretched (Capacity Strain)',
+  transition: 'A leadership change is coming (Leadership Transition)',
+  checkup: 'No specific trigger, a check-up',
+};
 
 const STAGE_LABELS = {
   build: 'Build (Formation Readiness, $2,000 diagnostic)',
@@ -217,10 +226,11 @@ app.post('/api/contact', async (req, res) => {
     name: String(fields.name).trim(),
     org: String(fields.organization || '').trim(),
     source: 'website contact form',
-    notes: contactNotes + (orgStage ? `\nStage: ${STAGE_LABELS[orgStage]}` : ''),
+    notes: contactNotes + (orgStage ? `\nStage: ${STAGE_LABELS[orgStage]}` : '') + (TRIGGER_LABELS[body.trigger] ? `\nSituation: ${TRIGGER_LABELS[body.trigger]}` : ''),
     sourceRef: leadRef,
     interest,
     orgStage,
+    trigger: TRIGGER_LABELS[body.trigger] ? body.trigger : '',
   });
 
   try {
@@ -331,6 +341,51 @@ app.get('/api/stats', async (req, res) => {
 });
 
 /* ------------------------------------------------------------------ */
+/* GET /api/durability-index: what the free tools show across every     */
+/* organization that answered on the evidence rubric. Anonymous         */
+/* aggregates only, cached 1 hour, and withheld below 25 responses.     */
+/* ------------------------------------------------------------------ */
+const DURABILITY_MIN = 25;
+let durabilityCache = { at: 0, data: null };
+function computeDurability(rows) {
+  const n = rows.length;
+  if (n < DURABILITY_MIN) return { ready: false, responses: n, needed: DURABILITY_MIN };
+  let hidden = 0;
+  const lowest = {};
+  const triggers = {};
+  let withTrigger = 0;
+  for (const r of rows) {
+    const pillars = Array.isArray(r.pillar_scores) ? r.pillar_scores : [];
+    const pcts = pillars.map((p) => p && p.pct).filter((v) => typeof v === 'number');
+    if (pcts.length && r.score_pct >= 60 && Math.min(...pcts) < 40) hidden++;
+    const dims = mapToHealthIndex(r.tool, pillars);
+    if (dims.length) {
+      const low = dims.reduce((m, d) => (d.pct < m.pct ? d : m), dims[0]);
+      lowest[low.dimension] = (lowest[low.dimension] || 0) + 1;
+    }
+    if (r.trigger_key && r.trigger_key !== 'checkup') { withTrigger++; triggers[r.trigger_key] = (triggers[r.trigger_key] || 0) + 1; }
+  }
+  const share = (c, d) => Math.round((100 * c) / d);
+  const lowTotal = Object.values(lowest).reduce((a, b) => a + b, 0);
+  return {
+    ready: true,
+    responses: n,
+    hiddenWeakSpotPct: share(hidden, n),
+    weakestDimensions: Object.entries(lowest).sort((a, b) => b[1] - a[1]).map(([dimension, c]) => ({ dimension, pct: share(c, lowTotal) })),
+    triggers: withTrigger >= 10 ? Object.entries(triggers).sort((a, b) => b[1] - a[1]).map(([key, c]) => ({ key, pct: share(c, withTrigger) })) : [],
+    triggerResponses: withTrigger,
+  };
+}
+app.get('/api/durability-index', async (req, res) => {
+  if (!durabilityCache.data || Date.now() - durabilityCache.at > 60 * 60 * 1000) {
+    const rows = await durabilityRows();
+    if (rows) durabilityCache = { at: Date.now(), data: computeDurability(rows) };
+  }
+  res.set('Cache-Control', 'public, max-age=600');
+  res.json({ ok: true, ...(durabilityCache.data || { ready: false, responses: null, needed: DURABILITY_MIN }) });
+});
+
+/* ------------------------------------------------------------------ */
 /* POST /api/ask: "Ask about your results" on the Health Index page.    */
 /* Body: {question, scores:[{label,pct}], seal?, stage?}. Scores only;  */
 /* nothing is stored.                                                   */
@@ -419,6 +474,7 @@ app.post('/api/assessment-lead', async (req, res) => {
     toolName: TOOL_DISPLAY_NAMES[tool] || 'Sustainability Self-Assessment',
     healthIndex,
     stage: STAGE_LABELS[body.stage] || '',
+    trigger: TRIGGER_LABELS[body.trigger] || '',
     org: cleanOrg(body.org),
     seal: cleanSeal(body.seal),
     toolsTaken: Array.isArray(body.toolsTaken) ? body.toolsTaken.filter((t) => typeof t === 'string').slice(0, 8).map((t) => t.slice(0, 60)) : [],
@@ -431,6 +487,7 @@ app.post('/api/assessment-lead', async (req, res) => {
     payload.toolsTaken.length && `Tools taken: ${payload.toolsTaken.join(', ')}`,
     payload.seal && `Candid Seal path: ${payload.seal}`,
     payload.stage && `Stage: ${payload.stage}`,
+    payload.trigger && `Situation: ${payload.trigger}`,
     `Composite score: ${Math.round(payload.scorePct)}%${payload.band ? ' (' + payload.band + ')' : ''}`,
     'By area: ' + payload.pillarScores.map(p => `${p.label} ${Math.round(p.pct)}%`).join(', '),
     formatHealthIndex(healthIndex),
@@ -445,6 +502,7 @@ app.post('/api/assessment-lead', async (req, res) => {
     // the visitor's stage, so that's the offer a tool lead is about.
     interest: 'institutionalos-diagnostic',
     orgStage: STAGE_LABELS[body.stage] ? body.stage : '',
+    trigger: TRIGGER_LABELS[body.trigger] ? body.trigger : '',
     link: payload.org ? `https://projects.propublica.org/nonprofits/organizations/${payload.org.ein.replace('-', '')}` : '',
   });
 
@@ -519,6 +577,7 @@ app.post('/api/assessment-narrative', async (req, res) => {
     band: typeof body.band === 'string' ? body.band : '',
     pillarScores: body.pillarScores,
     scale,
+    trigger: body.trigger,
   });
  
   // Signed score_ref token, same mechanism the InstitutionalOS scorecard

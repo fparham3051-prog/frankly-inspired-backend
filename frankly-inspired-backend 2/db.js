@@ -80,6 +80,10 @@ if (DATABASE_URL) {
     -- InstitutionalOS evidence rubric (not in place ... verified). Benchmarks
     -- only compare responses given on the same scale.
     ALTER TABLE assessment_responses ADD COLUMN IF NOT EXISTS scale TEXT NOT NULL DEFAULT 'agreement';
+    -- The situation the visitor picked at the top of the tool ("What's
+    -- happening right now?"): expansion, funder, founder, strain,
+    -- transition, or checkup. NULL when skipped. Feeds the problem rate.
+    ALTER TABLE assessment_responses ADD COLUMN IF NOT EXISTS trigger_key TEXT;
     -- Opt-in 90-day re-check reminders. One row per request; the row (and
     -- with it the email address) is deleted as soon as the reminder is sent
     -- or cancelled. Nothing else is ever sent to these addresses.
@@ -134,15 +138,17 @@ function withTimeout(promise, ms, label) {
  * blocks the caller, and never affects what the visitor sees — a DB outage
  * should never break any assessment.
  */
-async function logAssessmentResponse({ tool, scorePct, band, pillarScores, scale }) {
+const TRIGGER_KEYS = ['expansion', 'funder', 'founder', 'strain', 'transition', 'checkup'];
+
+async function logAssessmentResponse({ tool, scorePct, band, pillarScores, scale, trigger }) {
   if (!pool) return;
   const safeTool = KNOWN_TOOLS.includes(tool) ? tool : 'self-assessment';
   try {
     if (ready) await withTimeout(ready, 6000, 'DB init');
     await withTimeout(
       pool.query(
-        'INSERT INTO assessment_responses (tool, score_pct, band, pillar_scores, scale) VALUES ($1, $2, $3, $4, $5)',
-        [safeTool, scorePct, band || null, JSON.stringify(pillarScores), scale === 'evidence' ? 'evidence' : 'agreement']
+        'INSERT INTO assessment_responses (tool, score_pct, band, pillar_scores, scale, trigger_key) VALUES ($1, $2, $3, $4, $5, $6)',
+        [safeTool, scorePct, band || null, JSON.stringify(pillarScores), scale === 'evidence' ? 'evidence' : 'agreement', TRIGGER_KEYS.includes(trigger) ? trigger : null]
       ),
       6000,
       'insert assessment response'
@@ -272,4 +278,20 @@ async function addFeedback(f) {
   }
 }
 
-module.exports = { addFeedback, logAssessmentResponse, getBenchmarks, KNOWN_TOOLS, countResponses, addReminder, dueReminders, deleteReminder };
+/** Evidence-rubric responses for the Durability Index (anonymous: tool,
+ * scores, and the situation picked, nothing else). Newest 5,000. */
+async function durabilityRows() {
+  if (!pool) return null;
+  try {
+    if (ready) await withTimeout(ready, 6000, 'DB init');
+    const { rows } = await withTimeout(pool.query(
+      "SELECT tool, score_pct, pillar_scores, trigger_key FROM assessment_responses WHERE scale = 'evidence' ORDER BY id DESC LIMIT 5000"
+    ), 9000, 'durabilityRows');
+    return rows;
+  } catch (err) {
+    console.error('durabilityRows failed:', err.message);
+    return null;
+  }
+}
+
+module.exports = { durabilityRows, addFeedback, logAssessmentResponse, getBenchmarks, KNOWN_TOOLS, countResponses, addReminder, dueReminders, deleteReminder };

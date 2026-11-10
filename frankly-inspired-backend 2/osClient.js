@@ -43,6 +43,7 @@ async function pushProspect(lead) {
           sourceRef: lead.sourceRef,
           interest: lead.interest || '',
           orgStage: lead.orgStage || '',
+          trigger: lead.trigger || '',
         }],
       }),
       signal: controller.signal,

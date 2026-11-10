@@ -149,6 +149,7 @@ function assessmentLeadNotificationEmail(payload, leadRef, osAdded) {
     <p style="font-family:Arial,sans-serif;font-size:13px;"><strong>By pillar:</strong> ${escapeHtml(bars)}</p>
     <p style="font-family:Arial,sans-serif;font-size:13px;"><strong>Tool:</strong> ${escapeHtml(payload.toolName || 'Sustainability Self-Assessment')}</p>
     ${payload.stage ? `<p style="font-family:Arial,sans-serif;font-size:13px;"><strong>Stage:</strong> ${escapeHtml(payload.stage)}</p>` : ''}
+    ${payload.trigger ? `<p style="font-family:Arial,sans-serif;font-size:13px;"><strong>Situation:</strong> ${escapeHtml(payload.trigger)}</p>` : ''}
     ${hi ? `<p style="font-family:Arial,sans-serif;font-size:13px;"><strong>Indicative Health Index (self-reported):</strong> ${escapeHtml(hi)}</p>` : ''}
     ${leadRefHtml(leadRef, osAdded)}
   `);
