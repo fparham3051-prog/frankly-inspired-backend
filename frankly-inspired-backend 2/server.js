@@ -36,9 +36,9 @@ const {
   feedbackThanksEmail,
 } = require('./emailTemplates');
 const { generateAssessmentNarrative, answerQuestion } = require('./aiNarrative');
-const { durabilityRows, addFeedback, logAssessmentResponse, getBenchmarks, KNOWN_TOOLS, countResponses, addReminder, dueReminders, deleteReminder } = require('./db');
+const { logLead, recentLeads, durabilityRows, addFeedback, logAssessmentResponse, getBenchmarks, KNOWN_TOOLS, countResponses, addReminder, dueReminders, deleteReminder } = require('./db');
 const { makeScoreRef, verifyScoreRef } = require('./scoreRef');
-const { pushProspect, getGivingLandscape, osConfigured } = require('./osClient');
+const { pushFeedback, pushProspect, getGivingLandscape, osConfigured } = require('./osClient');
 const { mapToHealthIndex, formatHealthIndex } = require('./healthIndex');
 const { searchOrgs, orgSnapshot, fmtEin } = require('./org990');
 const crypto = require('crypto');
@@ -76,6 +76,19 @@ const SUPPORT_AREA_TO_INTEREST = {
 };
 const STAGE_FROM_SCORE = { BUILD: 'build', FUND: 'fund', SUSTAIN: 'sustain' };
 // "What's happening right now?" on every free tool (website src/scripts/trigger.ts).
+// Health Index dimension label -> the key FIOS and InstitutionalOS use.
+const DIMENSION_KEYS = {
+  'Strategy and Positioning': 'strategy', 'Program and Impact Evidence': 'program',
+  'Revenue and Financial Health': 'revenue', 'Leadership and Organizational Capacity': 'leadership',
+  'Operations and Infrastructure': 'operations', 'Partnerships and Ecosystem': 'partnerships',
+  'Governance and Risk': 'governance',
+};
+/** {key: pct} from mapToHealthIndex rows: the visitor's self-assessment. */
+function selfScoresFrom(rows) {
+  const out = {};
+  for (const r of rows || []) { const k = DIMENSION_KEYS[r.dimension]; if (k) out[k] = r.pct; }
+  return Object.keys(out).length ? out : undefined;
+}
 const TRIGGER_LABELS = {
   expansion: 'Adding a site, city, or major program (Expansion Readiness)',
   funder: 'Going after bigger funding, or a major grant is ending (Funder Readiness)',
@@ -232,6 +245,7 @@ app.post('/api/contact', async (req, res) => {
     orgStage,
     trigger: TRIGGER_LABELS[body.trigger] ? body.trigger : '',
   });
+  logLead({ ref: leadRef, kind: 'contact', pushed: osAdded });
 
   try {
     const ack = contactAcknowledgementEmail(fields);
@@ -300,6 +314,8 @@ app.post('/api/feedback', async (req, res) => {
     return res.status(400).json({ ok: false, error: 'Please tell us a little about how it went.' });
   }
   const id = await addFeedback(f);
+  const fbRef = 'feedback-' + (id || Date.now());
+  pushFeedback(f, fbRef).then((ok) => logLead({ ref: fbRef, kind: 'feedback', pushed: ok }));
   try {
     const note = feedbackNotificationEmail(f, id);
     const thanks = feedbackThanksEmail(f);
@@ -338,6 +354,16 @@ app.get('/api/stats', async (req, res) => {
   }
   res.set('Cache-Control', 'public, max-age=600');
   res.json({ ok: true, ...(statsCache.data || { assessments: null }) });
+});
+
+/* GET /api/admin/lead-log?hours=48: lead references for the operations  */
+/* app's daily reconciliation. Same secret as the reminder sender.        */
+app.get('/api/admin/lead-log', async (req, res) => {
+  const secret = process.env.REMINDER_SECRET || '';
+  if (!secret || req.get('X-Reminder-Secret') !== secret) return res.status(401).json({ ok: false });
+  const rows = await recentLeads(req.query.hours);
+  if (!rows) return res.status(503).json({ ok: false, error: 'database unavailable' });
+  res.json({ ok: true, leads: rows.map((r) => ({ ref: r.source_ref, kind: r.kind, pushed: r.pushed, at: r.created_at })) });
 });
 
 /* ------------------------------------------------------------------ */
@@ -503,8 +529,10 @@ app.post('/api/assessment-lead', async (req, res) => {
     interest: 'institutionalos-diagnostic',
     orgStage: STAGE_LABELS[body.stage] ? body.stage : '',
     trigger: TRIGGER_LABELS[body.trigger] ? body.trigger : '',
+    selfScores: selfScoresFrom(healthIndex),
     link: payload.org ? `https://projects.propublica.org/nonprofits/organizations/${payload.org.ein.replace('-', '')}` : '',
   });
+  logLead({ ref: leadRef, kind: 'tool', pushed: osAdded });
 
   try {
     const results = assessmentResultsEmail(payload);
@@ -647,6 +675,7 @@ app.post('/api/scorecard-results', async (req, res) => {
   };
   const leadRef = typeof body.leadRef === 'string' ? body.leadRef.slice(0, 80) : '';
   const osAdded = body.osAdded === true;
+  if (leadRef) logLead({ ref: leadRef, kind: 'scorecard', pushed: osAdded });
 
   try {
     const results = scorecardResultsEmail(r);

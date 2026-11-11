@@ -44,6 +44,7 @@ async function pushProspect(lead) {
           interest: lead.interest || '',
           orgStage: lead.orgStage || '',
           trigger: lead.trigger || '',
+          selfScores: lead.selfScores || undefined,
         }],
       }),
       signal: controller.signal,
@@ -56,6 +57,32 @@ async function pushProspect(lead) {
     return true;
   } catch (err) {
     console.error('pushProspect failed:', err.message);
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Sends client feedback (/feedback) to the operations app's Testimonials
+ * list, with the publishing permission the client chose.
+ * @returns {Promise<boolean>}
+ */
+async function pushFeedback(f, ref) {
+  if (!osConfigured()) return false;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const res = await fetch(OS_API_URL + '/api/admin/feedback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Token': OS_PROSPECTS_TOKEN },
+      body: JSON.stringify({ ...f, sourceRef: ref }),
+      signal: controller.signal,
+    });
+    const data = await res.json().catch(() => null);
+    return !!(res.ok && data && data.ok);
+  } catch (err) {
+    console.error('pushFeedback failed:', err.message);
     return false;
   } finally {
     clearTimeout(timer);
@@ -88,4 +115,5 @@ async function getGivingLandscape(limit = 6) {
   }
 }
 
-module.exports = { osConfigured, pushProspect, getGivingLandscape };
+module.exports = {
+  pushFeedback, osConfigured, pushProspect, getGivingLandscape };

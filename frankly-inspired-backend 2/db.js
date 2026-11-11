@@ -98,6 +98,18 @@ if (DATABASE_URL) {
     -- Client feedback from /feedback. "permission" is what the client
     -- allowed: 'named' (quote with name and organization), 'anonymous'
     -- (quote with role only), or 'private' (never published).
+    -- One row per lead the site produced (contact form, emailed tool
+    -- results, client feedback). The operations app's daily reconciliation
+    -- compares these refs with its prospects to catch any that never
+    -- arrived. Holds no personal data: a reference, a kind, and whether the
+    -- direct push succeeded.
+    CREATE TABLE IF NOT EXISTS lead_log (
+      id SERIAL PRIMARY KEY,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      source_ref TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      pushed BOOLEAN NOT NULL DEFAULT false
+    );
     CREATE TABLE IF NOT EXISTS feedback (
       id SERIAL PRIMARY KEY,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -294,4 +306,29 @@ async function durabilityRows() {
   }
 }
 
-module.exports = { durabilityRows, addFeedback, logAssessmentResponse, getBenchmarks, KNOWN_TOOLS, countResponses, addReminder, dueReminders, deleteReminder };
+async function logLead({ ref, kind, pushed }) {
+  if (!pool || !ref) return;
+  try {
+    if (ready) await withTimeout(ready, 6000, 'DB init');
+    await withTimeout(pool.query('INSERT INTO lead_log (source_ref, kind, pushed) VALUES ($1, $2, $3)', [String(ref).slice(0, 120), kind, !!pushed]), 6000, 'logLead');
+  } catch (err) {
+    console.error('logLead failed:', err.message);
+  }
+}
+
+async function recentLeads(hours) {
+  if (!pool) return null;
+  try {
+    if (ready) await withTimeout(ready, 6000, 'DB init');
+    const { rows } = await withTimeout(pool.query(
+      "SELECT source_ref, kind, pushed, created_at FROM lead_log WHERE created_at > now() - ($1 || ' hours')::interval ORDER BY created_at DESC LIMIT 1000",
+      [String(Math.max(1, Math.min(24 * 14, Number(hours) || 48)))]
+    ), 9000, 'recentLeads');
+    return rows;
+  } catch (err) {
+    console.error('recentLeads failed:', err.message);
+    return null;
+  }
+}
+
+module.exports = { logLead, recentLeads, durabilityRows, addFeedback, logAssessmentResponse, getBenchmarks, KNOWN_TOOLS, countResponses, addReminder, dueReminders, deleteReminder };
