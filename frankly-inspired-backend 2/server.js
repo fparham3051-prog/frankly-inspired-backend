@@ -32,6 +32,7 @@ const {
   scorecardResultsEmail,
   scorecardLeadNotificationEmail,
   recheckReminderEmail,
+  checkinReminderEmail,
   feedbackNotificationEmail,
   feedbackThanksEmail,
 } = require('./emailTemplates');
@@ -468,6 +469,45 @@ app.post('/api/admin/send-reminders', async (req, res) => {
   } catch (err) {
     console.error('send-reminders failed:', err.message);
     return res.status(500).json({ ok: false, sent, failed });
+  }
+  res.json({ ok: true, sent, failed });
+});
+
+/* ------------------------------------------------------------------ */
+/* POST /api/admin/send-checkin-reminders: emails each InstitutionalOS */
+/* client whose weekly 90-day-plan check-in is due. InstitutionalOS     */
+/* decides who is due (and on which weekday); this just sends and       */
+/* reports back. Same secret as the re-check reminders.                 */
+/* ------------------------------------------------------------------ */
+const GRANTPASS_DASHBOARD = (process.env.GRANTPASS_DASHBOARD || 'https://grantpass-dashboard.onrender.com').replace(/\/+$/, '');
+const GRANTPASS_INTEGRATION_KEY = process.env.GRANTPASS_INTEGRATION_KEY || '';
+async function iosCall(path, method = 'GET') {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 70000);
+  try {
+    const r = await fetch(GRANTPASS_API + path, { method, headers: { 'X-Integration-Key': GRANTPASS_INTEGRATION_KEY, 'Content-Type': 'application/json' }, signal: controller.signal });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || 'InstitutionalOS returned ' + r.status);
+    return data;
+  } finally { clearTimeout(timer); }
+}
+app.post('/api/admin/send-checkin-reminders', async (req, res) => {
+  if (!REMINDER_SECRET || req.get('X-Reminder-Secret') !== REMINDER_SECRET) return res.status(401).json({ ok: false });
+  if (!GRANTPASS_INTEGRATION_KEY) return res.status(503).json({ ok: false, error: 'GRANTPASS_INTEGRATION_KEY is not set' });
+  let sent = 0, failed = 0;
+  try {
+    const { due = [] } = await iosCall('/integration/checkins-due');
+    for (const c of due.slice(0, 50)) {
+      const portalUrl = `${GRANTPASS_DASHBOARD}/report.html?client=${encodeURIComponent(c.clientToken)}&api=${encodeURIComponent(GRANTPASS_API)}`;
+      const mail = checkinReminderEmail({ contactName: c.contactName, orgName: c.name, portalUrl, nextAction: c.nextAction, actionsDone: c.actionsDone, actionsTotal: c.actionsTotal, target: c.target });
+      const out = await resend.emails.send({ from: FROM_EMAIL, to: c.email, replyTo: TO_EMAIL || undefined, subject: mail.subject, html: mail.html }).catch((e) => ({ error: e }));
+      if (out && out.error) { failed++; console.error('check-in reminder failed:', out.error); continue; }
+      await iosCall(`/integration/orgs/${c.orgId}/reminded`, 'POST').catch((e) => console.error('mark reminded failed:', e.message));
+      sent++;
+    }
+  } catch (err) {
+    console.error('send-checkin-reminders failed:', err.message);
+    return res.status(502).json({ ok: false, sent, failed, error: err.name === 'AbortError' ? 'InstitutionalOS timed out' : err.message });
   }
   res.json({ ok: true, sent, failed });
 });

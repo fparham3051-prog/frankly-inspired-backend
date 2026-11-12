@@ -229,6 +229,26 @@ function recheckReminderEmail({ toolName }) {
   return { subject: 'Your 90-day Health Index re-check', html };
 }
 
+/** Weekly check-in reminder for a client working a 90-Day Improvement
+ * Plan in their InstitutionalOS portal. Sent only while a check-in is due. */
+function checkinReminderEmail({ contactName, orgName, portalUrl, nextAction, actionsDone, actionsTotal, target }) {
+  const hi = contactName ? `Hi ${escapeHtml(String(contactName).split(' ')[0])},` : 'Hello,';
+  const html = wrapEmail(`
+    <h1 style="font-size:20px;color:${BRAND.navy};margin:0 0 20px;">Your 15-minute weekly check-in</h1>
+    <p>${hi}</p>
+    <p>It's time for this week's check-in on ${escapeHtml(orgName)}'s 90-Day Improvement Plan${target ? `: <em>${escapeHtml(target)}</em>` : ''}.</p>
+    ${actionsTotal ? `<p>${actionsDone} of ${actionsTotal} actions are done.${nextAction ? ` Next up: <strong>${escapeHtml(nextAction)}</strong>.` : ''}</p>` : ''}
+    <p>Five quick questions: what got done, what's blocked, what evidence you added, what decision you need, and what happens before next week. You can also update each action's status.</p>
+    <p style="margin:24px 0;">
+      <a href="${portalUrl}#plan" style="background:${BRAND.gold};color:${BRAND.navy};text-decoration:none;padding:12px 24px;border-radius:4px;font-family:Arial,sans-serif;font-weight:bold;font-size:14px;display:inline-block;">Open your check-in</a>
+    </p>
+    <p>Blocked on something? Reply to this email and I'll help you work through it.</p>
+    <p style="margin-top:28px;">In partnership,<br>Franklin D. Parham<br>Founder and Principal<br>Frankly Inspired and Associates, LLC</p>
+    <p style="font-family:Arial,sans-serif;font-size:11px;color:#6b7480;margin-top:24px;">You get this only while your plan's weekly check-in is due. Reply "stop" and Franklin will turn these reminders off.</p>
+  `);
+  return { subject: `Weekly check-in: ${orgName}`, html };
+}
+
 const PERMISSION_LABELS = {
   named: 'Yes, with my name and organization',
   anonymous: 'Yes, anonymously (role only)',
@@ -280,6 +300,7 @@ module.exports = {
   feedbackNotificationEmail,
   feedbackThanksEmail,
   recheckReminderEmail,
+  checkinReminderEmail,
   contactAcknowledgementEmail,
   contactNotificationEmail,
   assessmentResultsEmail,
