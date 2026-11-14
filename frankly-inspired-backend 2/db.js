@@ -50,7 +50,7 @@ if (DATABASE_URL) {
   // hanging a request forever.
   pool = new Pool({
     connectionString: DATABASE_URL,
-    ssl: { rejectUnauthorized: false },
+    ssl: /localhost|127\.0\.0\.1/.test(DATABASE_URL) ? false : { rejectUnauthorized: false },
     connectionTimeoutMillis: 8000,
     query_timeout: 8000,
   });
@@ -103,6 +103,13 @@ if (DATABASE_URL) {
     -- compares these refs with its prospects to catch any that never
     -- arrived. Holds no personal data: a reference, a kind, and whether the
     -- direct push succeeded.
+    CREATE TABLE IF NOT EXISTS page_counts (
+      day DATE NOT NULL,
+      path TEXT NOT NULL,
+      event TEXT NOT NULL DEFAULT 'view',
+      n INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (day, path, event)
+    );
     CREATE TABLE IF NOT EXISTS lead_log (
       id SERIAL PRIMARY KEY,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -331,4 +338,46 @@ async function recentLeads(hours) {
   }
 }
 
-module.exports = { logLead, recentLeads, durabilityRows, addFeedback, logAssessmentResponse, getBenchmarks, KNOWN_TOOLS, countResponses, addReminder, dueReminders, deleteReminder };
+// Full export of every table for the nightly backup the operations app
+// collects (GET /api/admin/backup). Read-only.
+async function exportAll() {
+  if (!pool) return null;
+  await ready;
+  const t = await pool.query("SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE' ORDER BY table_name");
+  const tables = {};
+  for (const { table_name } of t.rows) {
+    const r = await pool.query(`SELECT * FROM "${table_name}"`);
+    tables[table_name] = r.rows;
+  }
+  return { app: 'website-backend', exportedAt: new Date().toISOString(), tables };
+}
+
+// Data retention (see the operations app's docs/DATA-RETENTION.md): lead
+// references are only needed for the daily reconciliation, so they're
+// removed after 180 days. Anonymous scores are kept (no personal data).
+async function purgeOld() {
+  if (!pool) return null;
+  await ready;
+  const r = await pool.query("DELETE FROM lead_log WHERE created_at < now() - interval '180 days'");
+  const pc = await pool.query("DELETE FROM page_counts WHERE day < CURRENT_DATE - 400");
+  return { leadLogDeleted: r.rowCount, pageCountsDeleted: pc.rowCount };
+}
+
+// Cookie-free visit counting: page, day, and event name only. No IP, no
+// visitor ID, nothing that identifies a person.
+async function countPage(path, event) {
+  if (!pool) return;
+  await ready;
+  await pool.query(
+    "INSERT INTO page_counts (day, path, event, n) VALUES (CURRENT_DATE, $1, $2, 1) ON CONFLICT (day, path, event) DO UPDATE SET n = page_counts.n + 1",
+    [path, event]);
+}
+async function pageCounts(days) {
+  if (!pool) return null;
+  await ready;
+  const d = Math.min(Math.max(Number(days) || 31, 1), 400);
+  const r = await pool.query("SELECT day::text AS day, path, event, n FROM page_counts WHERE day >= CURRENT_DATE - $1::int ORDER BY day", [d]);
+  return r.rows;
+}
+
+module.exports = { countPage, pageCounts, purgeOld, exportAll, logLead, recentLeads, durabilityRows, addFeedback, logAssessmentResponse, getBenchmarks, KNOWN_TOOLS, countResponses, addReminder, dueReminders, deleteReminder };

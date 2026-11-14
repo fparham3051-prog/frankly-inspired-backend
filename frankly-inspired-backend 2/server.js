@@ -37,7 +37,7 @@ const {
   feedbackThanksEmail,
 } = require('./emailTemplates');
 const { generateAssessmentNarrative, answerQuestion } = require('./aiNarrative');
-const { logLead, recentLeads, durabilityRows, addFeedback, logAssessmentResponse, getBenchmarks, KNOWN_TOOLS, countResponses, addReminder, dueReminders, deleteReminder } = require('./db');
+const { countPage, pageCounts, purgeOld, exportAll, logLead, recentLeads, durabilityRows, addFeedback, logAssessmentResponse, getBenchmarks, KNOWN_TOOLS, countResponses, addReminder, dueReminders, deleteReminder } = require('./db');
 const { makeScoreRef, verifyScoreRef } = require('./scoreRef');
 const { pushFeedback, pushProspect, getGivingLandscape, osConfigured } = require('./osClient');
 const { mapToHealthIndex, formatHealthIndex } = require('./healthIndex');
@@ -355,6 +355,58 @@ app.get('/api/stats', async (req, res) => {
   }
   res.set('Cache-Control', 'public, max-age=600');
   res.json({ ok: true, ...(statsCache.data || { assessments: null }) });
+});
+
+/* GET /api/admin/backup: every table, for the operations app's nightly   */
+/* backup. Same secret as the reminder sender.                            */
+app.get('/api/admin/backup', async (req, res) => {
+  const secret = process.env.REMINDER_SECRET || '';
+  if (!secret || req.get('X-Reminder-Secret') !== secret) return res.status(401).json({ ok: false });
+  try {
+    const data = await exportAll();
+    if (!data) return res.status(503).json({ ok: false, error: 'database unavailable' });
+    res.json(data);
+  } catch (err) {
+    console.error('backup export failed', err);
+    res.status(500).json({ ok: false, error: 'export failed' });
+  }
+});
+
+/* POST /api/pv: cookie-free page and event counter for the funnel.        */
+/* Body: { p: "/path", e: "view" | an allowed event }. Counts only.        */
+const PV_EVENTS = new Set(['view', 'tool_start', 'tool_complete', 'schedule_click', 'schedule_inline_open', 'contact_submit', 'quick_checkup_view']);
+app.post('/api/pv', express.text({ type: '*/*', limit: '1kb' }), (req, res) => {
+  let body = {};
+  try { body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {}); } catch (e) {}
+  const p = String(body.p || '').slice(0, 120);
+  const e = PV_EVENTS.has(body.e) ? body.e : 'view';
+  if (!/^\/[\w\-\/.]*$/.test(p)) return res.status(204).end();
+  countPage(p.replace(/\/+$/, '') || '/', e).catch(() => {});
+  res.status(204).end();
+});
+
+/* GET /api/admin/page-counts?days=31: visits and events for the funnel.   */
+app.get('/api/admin/page-counts', async (req, res) => {
+  const secret = process.env.REMINDER_SECRET || '';
+  if (!secret || req.get('X-Reminder-Secret') !== secret) return res.status(401).json({ ok: false });
+  const rows = await pageCounts(req.query.days).catch(() => null);
+  if (!rows) return res.status(503).json({ ok: false, error: 'database unavailable' });
+  res.json({ ok: true, rows });
+});
+
+/* POST /api/admin/retention: apply the data-retention rule (called by the */
+/* operations app's retention run). Same secret as the reminder sender.   */
+app.post('/api/admin/retention', async (req, res) => {
+  const secret = process.env.REMINDER_SECRET || '';
+  if (!secret || req.get('X-Reminder-Secret') !== secret) return res.status(401).json({ ok: false });
+  try {
+    const out = await purgeOld();
+    if (!out) return res.status(503).json({ ok: false, error: 'database unavailable' });
+    res.json({ ok: true, ...out });
+  } catch (err) {
+    console.error('retention failed', err);
+    res.status(500).json({ ok: false, error: 'retention failed' });
+  }
 });
 
 /* GET /api/admin/lead-log?hours=48: lead references for the operations  */
