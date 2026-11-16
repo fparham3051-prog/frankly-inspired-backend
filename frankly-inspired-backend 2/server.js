@@ -507,6 +507,38 @@ app.get('/api/reminders/cancel', async (req, res) => {
   const done = /^[A-Za-z0-9_-]{10,64}$/.test(token) ? await deleteReminder({ token }).catch(() => false) : false;
   res.type('html').send(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Reminder cancelled</title><body style="font-family:Arial,sans-serif;max-width:520px;margin:60px auto;padding:0 16px;color:#1f2933"><h1 style="font-size:20px;color:#0f1f3d">${done ? 'Reminder cancelled' : 'Nothing to cancel'}</h1><p>${done ? 'Your 90-day reminder and email address have been deleted.' : 'This reminder was already sent or cancelled.'}</p><p><a href="https://franklyinspired.associates/health-index">Back to your Health Index</a></p></body>`);
 });
+// ---------------------------------------------------------------------
+// Messages approved in the operations app (Process Library). The operations
+// app sends only after the owner approves each one. Plain text in, a simple
+// branded HTML version out. X-Reminder-Secret, like the other admin routes.
+// mail-status tells the app whether outside delivery works yet: while the
+// sender is Resend's shared onboarding address, Resend delivers only to the
+// account's own address, so the app offers "open in my email" instead.
+// ---------------------------------------------------------------------
+const SENDS_EXTERNAL = !/resend\.dev/i.test(FROM_EMAIL);
+app.get('/api/admin/mail-status', (req, res) => {
+  const secret = process.env.REMINDER_SECRET;
+  if (!secret || req.get('X-Reminder-Secret') !== secret) return res.status(401).json({ ok: false });
+  res.json({ ok: true, external: SENDS_EXTERNAL, from: FROM_EMAIL.replace(/^.*</, '').replace(/>.*$/, '') });
+});
+app.post('/api/admin/send-message', async (req, res) => {
+  const secret = process.env.REMINDER_SECRET;
+  if (!secret || req.get('X-Reminder-Secret') !== secret) return res.status(401).json({ ok: false });
+  const b = req.body || {};
+  const to = String(b.to || '').split(/[,;]\s*/).map((x) => x.trim()).filter((x) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x)).slice(0, 25);
+  const subject = String(b.subject || '').slice(0, 200).trim();
+  const text = String(b.text || '').slice(0, 20000);
+  if (!to.length || !subject || !text.trim()) return res.status(400).json({ ok: false, error: 'to, subject, and text are required' });
+  if (!SENDS_EXTERNAL) return res.status(409).json({ ok: false, error: 'Outside delivery is not set up yet (the sender is Resend\'s shared test address). Verify your domain in Resend and set FROM_EMAIL.' });
+  const esc = (x) => String(x).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const linkify = (x) => esc(x).replace(/https?:\/\/[^\s<]+/g, (u) => `<a href="${u}" style="color:#11233D">${u}</a>`);
+  const html = `<div style="font:15px/1.6 Arial,Helvetica,sans-serif;color:#23282D;max-width:620px">${text.split(/\n{2,}/).map((p) => `<p style="margin:0 0 14px">${linkify(p).replace(/\n/g, '<br>')}</p>`).join('')}</div>`;
+  const results = await Promise.all(to.map((addr) => resend.emails.send({ from: FROM_EMAIL, to: addr, replyTo: b.replyTo || undefined, subject, text, html }).catch((e) => ({ error: e }))));
+  const failed = results.filter((r) => r && r.error).length;
+  if (failed) console.error('POST /api/admin/send-message: Resend errors:', results.filter((r) => r && r.error).map((r) => r.error));
+  res.status(failed === to.length ? 502 : 200).json({ ok: failed < to.length, sent: to.length - failed, failed });
+});
+
 app.post('/api/admin/send-reminders', async (req, res) => {
   if (!REMINDER_SECRET || req.get('X-Reminder-Secret') !== REMINDER_SECRET) return res.status(401).json({ ok: false });
   let sent = 0, failed = 0;
