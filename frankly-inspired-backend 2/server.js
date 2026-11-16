@@ -37,7 +37,7 @@ const {
   feedbackThanksEmail,
 } = require('./emailTemplates');
 const { generateAssessmentNarrative, answerQuestion } = require('./aiNarrative');
-const { countPage, pageCounts, purgeOld, exportAll, logLead, recentLeads, durabilityRows, addFeedback, logAssessmentResponse, getBenchmarks, KNOWN_TOOLS, countResponses, addReminder, dueReminders, deleteReminder } = require('./db');
+const { getContent, setContent, countPage, pageCounts, purgeOld, exportAll, logLead, recentLeads, durabilityRows, addFeedback, logAssessmentResponse, getBenchmarks, KNOWN_TOOLS, countResponses, addReminder, dueReminders, deleteReminder } = require('./db');
 const { makeScoreRef, verifyScoreRef } = require('./scoreRef');
 const { pushFeedback, pushProspect, getGivingLandscape, osConfigured } = require('./osClient');
 const { mapToHealthIndex, formatHealthIndex } = require('./healthIndex');
@@ -124,6 +124,9 @@ if (!RESEND_API_KEY) {
 const resend = new Resend(RESEND_API_KEY);
  
 const app = express();
+// The AI relay carries documents (PDFs) for the Diagnostic first pass, so it
+// gets a larger body limit than every other route.
+app.use('/api/admin/ai', express.json({ limit: '32mb' }));
 app.use(express.json({ limit: '100kb' }));
 app.use(cors({ origin: ALLOWED_ORIGIN === '*' ? true : ALLOWED_ORIGIN.split(',').map(s => s.trim()) }));
  
@@ -156,7 +159,7 @@ app.use('/api/', rateLimit({
   max: 60,
   // Server-to-server calls from the scorecard all come from one address and
   // are authenticated by a shared secret instead.
-  skip: (req) => req.path === '/scorecard-results',
+  skip: (req) => req.path === '/scorecard-results' || req.path === '/admin/ai',
   standardHeaders: true,
   legacyHeaders: false,
   message: { ok: false, error: 'Too many requests. Please try again later.' },
@@ -288,6 +291,68 @@ app.post('/api/contact', async (req, res) => {
   }
 });
  
+/* ------------------------------------------------------------------ */
+/* POST /api/admin/ai: AI relay for the operations app. The Anthropic  */
+/* key lives only here; the operations app sends a system prompt and   */
+/* messages (text or PDF document blocks) with the shared admin secret */
+/* and gets the text back. Nothing is stored.                          */
+/* ------------------------------------------------------------------ */
+app.get('/api/admin/ai', (req, res) => {
+  const secret = process.env.REMINDER_SECRET || '';
+  if (!secret || req.get('X-Reminder-Secret') !== secret) return res.status(401).json({ ok: false });
+  res.json({ ok: true, configured: !!process.env.ANTHROPIC_API_KEY, model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-5' });
+});
+app.post('/api/admin/ai', async (req, res) => {
+  const secret = process.env.REMINDER_SECRET || '';
+  if (!secret || req.get('X-Reminder-Secret') !== secret) return res.status(401).json({ ok: false });
+  const key = process.env.ANTHROPIC_API_KEY;
+  if (!key) return res.status(503).json({ ok: false, error: 'AI is not set up on the website server (ANTHROPIC_API_KEY).' });
+  const b = req.body || {};
+  if (!Array.isArray(b.messages) || !b.messages.length) return res.status(400).json({ ok: false, error: 'messages required' });
+  const models = [...new Set([process.env.ANTHROPIC_MODEL || 'claude-sonnet-5', 'claude-sonnet-5-5'])];
+  const url = process.env.ANTHROPIC_API_URL || 'https://api.anthropic.com/v1/messages';
+  let last = '';
+  for (const model of models) {
+    try {
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+        body: JSON.stringify({ model, max_tokens: Math.min(Math.max(Number(b.maxTokens) || 1500, 100), 8000), system: String(b.system || '').slice(0, 60000), messages: b.messages }),
+        signal: AbortSignal.timeout(170000),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (r.status === 404 || (j.error && /model/i.test(String(j.error.message || '')) && r.status === 400)) { last = (j.error && j.error.message) || 'model not found'; continue; }
+      if (!r.ok) return res.status(502).json({ ok: false, error: (j.error && j.error.message) || 'AI service returned ' + r.status });
+      const text = (j.content || []).filter((x) => x.type === 'text').map((x) => x.text).join('').trim();
+      return res.json({ ok: true, text, model, usage: j.usage || null });
+    } catch (err) { last = err.message; }
+  }
+  return res.status(502).json({ ok: false, error: last || 'AI service unavailable' });
+});
+
+/* ------------------------------------------------------------------ */
+/* Field notes published from the operations app. It sends the whole    */
+/* published list (replace-all); the Insights page reads it.            */
+/* ------------------------------------------------------------------ */
+app.post('/api/admin/field-notes', async (req, res) => {
+  const secret = process.env.REMINDER_SECRET || '';
+  if (!secret || req.get('X-Reminder-Secret') !== secret) return res.status(401).json({ ok: false });
+  const notes = Array.isArray((req.body || {}).notes) ? req.body.notes.slice(0, 50) : null;
+  if (!notes) return res.status(400).json({ ok: false, error: 'notes required' });
+  const s = (v, n) => String(v == null ? '' : v).slice(0, n);
+  const clean = notes.map((x) => ({ id: s(x.id, 40).replace(/[^\w-]/g, ''), title: s(x.title, 160), signal: s(x.signal, 600), assumption: s(x.assumption, 600), constraint: s(x.constraint, 800), evidence: s(x.evidence, 800), action: s(x.action, 800), trigger: s(x.trigger, 20), publishedOn: s(x.publishedOn, 10) }));
+  const ok = await setContent('field_notes', JSON.stringify(clean));
+  if (!ok) return res.status(503).json({ ok: false, error: 'storage unavailable' });
+  res.json({ ok: true, count: clean.length });
+});
+app.get('/api/field-notes', async (req, res) => {
+  const row = await getContent('field_notes');
+  res.set('Cache-Control', 'public, max-age=300');
+  let notes = [];
+  try { notes = row ? JSON.parse(row.value) : []; } catch (e) { notes = []; }
+  res.json({ ok: true, notes });
+});
+
 /* ------------------------------------------------------------------ */
 /* POST /api/subscribe: the site-wide pop-up (name + email). Goes      */
 /* straight into the operations app's Prospecting as a website lead,    */

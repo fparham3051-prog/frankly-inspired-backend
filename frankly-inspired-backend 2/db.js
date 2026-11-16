@@ -129,6 +129,11 @@ if (DATABASE_URL) {
       quote TEXT,
       permission TEXT NOT NULL DEFAULT 'private'
     );
+    CREATE TABLE IF NOT EXISTS site_content (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
   `).catch(err => {
     console.error('DB init failed — persistence disabled for this run:', err.message);
     pool = null;
@@ -313,6 +318,24 @@ async function durabilityRows() {
   }
 }
 
+/** Small published content blobs (field notes from the operations app). */
+async function getContent(key) {
+  if (!pool) return null;
+  try {
+    if (ready) await withTimeout(ready, 6000, 'DB init');
+    const { rows } = await withTimeout(pool.query('SELECT value, updated_at FROM site_content WHERE key = $1', [key]), 6000, 'getContent');
+    return rows[0] || null;
+  } catch (err) { console.error('getContent failed:', err.message); return null; }
+}
+async function setContent(key, value) {
+  if (!pool) return false;
+  try {
+    if (ready) await withTimeout(ready, 6000, 'DB init');
+    await withTimeout(pool.query('INSERT INTO site_content (key, value, updated_at) VALUES ($1, $2, now()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()', [key, value]), 6000, 'setContent');
+    return true;
+  } catch (err) { console.error('setContent failed:', err.message); return false; }
+}
+
 async function logLead({ ref, kind, pushed }) {
   if (!pool || !ref) return;
   try {
@@ -380,4 +403,4 @@ async function pageCounts(days) {
   return r.rows;
 }
 
-module.exports = { countPage, pageCounts, purgeOld, exportAll, logLead, recentLeads, durabilityRows, addFeedback, logAssessmentResponse, getBenchmarks, KNOWN_TOOLS, countResponses, addReminder, dueReminders, deleteReminder };
+module.exports = { getContent, setContent, countPage, pageCounts, purgeOld, exportAll, logLead, recentLeads, durabilityRows, addFeedback, logAssessmentResponse, getBenchmarks, KNOWN_TOOLS, countResponses, addReminder, dueReminders, deleteReminder };
