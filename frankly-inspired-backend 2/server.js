@@ -141,7 +141,7 @@ const limiter = rateLimit({
 // benchmark calls fire automatically on every tool result, so sharing one
 // 5-per-15-minutes budget with them meant a visitor who finished two tools
 // and then tried to email results or contact Franklin could be blocked.
-app.use(['/api/contact', '/api/assessment-lead', '/api/reminders'], limiter);
+app.use(['/api/contact', '/api/assessment-lead', '/api/reminders', '/api/subscribe'], limiter);
 // The results assistant calls the AI model, so it gets its own budget:
 // 10 questions per visitor per 15 minutes.
 app.use('/api/ask', rateLimit({
@@ -288,6 +288,39 @@ app.post('/api/contact', async (req, res) => {
   }
 });
  
+/* ------------------------------------------------------------------ */
+/* POST /api/subscribe: the site-wide pop-up (name + email). Goes      */
+/* straight into the operations app's Prospecting as a website lead,    */
+/* logged for the daily reconciliation, and Franklin gets a short note. */
+/* Nothing is emailed to the visitor.                                   */
+/* ------------------------------------------------------------------ */
+app.post('/api/subscribe', async (req, res) => {
+  const body = req.body || {};
+  if (body.hp_field) return res.json({ ok: true });
+  const name = String(body.name || '').trim().slice(0, 120);
+  const email = String(body.email || '').trim().slice(0, 200);
+  if (!name) return res.status(400).json({ ok: false, error: 'Please add your name.' });
+  if (!isValidEmail(email)) return res.status(400).json({ ok: false, error: 'Please provide a valid email address.' });
+  const org = String(body.organization || '').trim().slice(0, 160);
+  const page = String(body.page || '').replace(/[^\w\-/.]/g, '').slice(0, 120) || '/';
+  const leadRef = 'web-popup-' + crypto.randomUUID();
+  const osAdded = await pushProspect({
+    name, org, source: 'website pop-up', sourceRef: leadRef,
+    notes: [`Email: ${email}`, org && `Organization: ${org}`, `Signed up for field notes from the website pop-up on ${page}`].filter(Boolean).join('\n'),
+  });
+  logLead({ ref: leadRef, kind: 'popup', pushed: osAdded });
+  const esc = (x) => String(x).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  try {
+    const r = await resend.emails.send({
+      from: FROM_EMAIL, to: TO_EMAIL, replyTo: email,
+      subject: `New website sign-up: ${name}`,
+      html: `<p><strong>${esc(name)}</strong> (${esc(email)})${org ? ' from ' + esc(org) : ''} signed up for field notes on ${esc(page)}.</p><p>${osAdded ? 'Added to Prospecting in the operations app.' : 'Not yet in the operations app (it was unreachable); the reconciliation will flag it.'}</p><p style="color:#666;font-size:12px">Lead reference: ${leadRef}</p>`,
+    });
+    if (r && r.error) console.error('POST /api/subscribe: Resend reported a delivery error:', r.error);
+  } catch (err) { console.error('POST /api/subscribe notify failed:', err.message); }
+  return res.json({ ok: true });
+});
+
 /* ------------------------------------------------------------------ */
 /* POST /api/feedback: client testimonial and results form (/feedback). */
 /* Saved, emailed to Franklin with a ready-to-paste site entry when the */
