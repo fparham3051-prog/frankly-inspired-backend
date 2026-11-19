@@ -124,6 +124,10 @@ if (!RESEND_API_KEY) {
 const resend = new Resend(RESEND_API_KEY);
  
 const app = express();
+// Render puts one proxy in front of this server. Without this, every visitor
+// looks like the same address, so the per-visitor limits below were shared by
+// everyone (five contact or tool submissions in 15 minutes for the whole site).
+app.set('trust proxy', 1);
 // The AI relay carries documents (PDFs) for the Diagnostic first pass, so it
 // gets a larger body limit than every other route.
 app.use('/api/admin/ai', express.json({ limit: '32mb' }));
@@ -663,15 +667,27 @@ app.post('/api/admin/send-reminders', async (req, res) => {
 /* ------------------------------------------------------------------ */
 const GRANTPASS_DASHBOARD = (process.env.GRANTPASS_DASHBOARD || 'https://grantpass-dashboard.onrender.com').replace(/\/+$/, '');
 const GRANTPASS_INTEGRATION_KEY = process.env.GRANTPASS_INTEGRATION_KEY || '';
+// InstitutionalOS sleeps on Render's free plan; while it wakes, the platform can
+// answer 429 or 502-504 for a little while. Wait and try again before giving up.
 async function iosCall(path, method = 'GET') {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 70000);
-  try {
-    const r = await fetch(GRANTPASS_API + path, { method, headers: { 'X-Integration-Key': GRANTPASS_INTEGRATION_KEY, 'Content-Type': 'application/json' }, signal: controller.signal });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(data.error || 'InstitutionalOS returned ' + r.status);
-    return data;
-  } finally { clearTimeout(timer); }
+  const waits = [0, 15000, 30000];
+  let last;
+  for (const w of waits) {
+    if (w) await new Promise((ok) => setTimeout(ok, w));
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 70000);
+    try {
+      const r = await fetch(GRANTPASS_API + path, { method, headers: { 'X-Integration-Key': GRANTPASS_INTEGRATION_KEY, 'Content-Type': 'application/json' }, signal: controller.signal });
+      const data = await r.json().catch(() => ({}));
+      if (r.ok) return data;
+      last = new Error(data.error || 'InstitutionalOS returned ' + r.status);
+      if (![429, 502, 503, 504].includes(r.status)) throw last;
+    } catch (e) {
+      last = e;
+      if (!(e && (e.name === 'AbortError' || /returned (429|50[234])|fetch failed|ECONN/.test(String(e.message))))) throw e;
+    } finally { clearTimeout(timer); }
+  }
+  throw last;
 }
 app.post('/api/admin/send-checkin-reminders', async (req, res) => {
   if (!REMINDER_SECRET || req.get('X-Reminder-Secret') !== REMINDER_SECRET) return res.status(401).json({ ok: false });
