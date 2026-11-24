@@ -37,7 +37,7 @@ const {
   feedbackThanksEmail,
 } = require('./emailTemplates');
 const { generateAssessmentNarrative, answerQuestion } = require('./aiNarrative');
-const { getContent, setContent, countPage, pageCounts, purgeOld, exportAll, logLead, recentLeads, durabilityRows, addFeedback, logAssessmentResponse, getBenchmarks, KNOWN_TOOLS, countResponses, addReminder, dueReminders, deleteReminder } = require('./db');
+const { getContent, setContent, countPage, pageCounts, purgeOld, exportAll, logLead, recentLeads, recentResponseCounts, durabilityRows, addFeedback, logAssessmentResponse, getBenchmarks, KNOWN_TOOLS, countResponses, addReminder, dueReminders, deleteReminder } = require('./db');
 const { makeScoreRef, verifyScoreRef } = require('./scoreRef');
 const { pushFeedback, pushProspect, getGivingLandscape, osConfigured } = require('./osClient');
 const { mapToHealthIndex, formatHealthIndex } = require('./healthIndex');
@@ -90,20 +90,25 @@ function selfScoresFrom(rows) {
   for (const r of rows || []) { const k = DIMENSION_KEYS[r.dimension]; if (k) out[k] = r.pct; }
   return Object.keys(out).length ? out : undefined;
 }
+// Plain words, as the visitor saw them (messaging system, Nov 2026).
 const TRIGGER_LABELS = {
-  expansion: 'Adding a site, city, or major program (Expansion Readiness)',
-  funder: 'Going after bigger funding, or a major grant is ending (Funder Readiness)',
-  founder: 'Too much depends on one leader (Founder Dependence)',
-  strain: 'Growing, but staff and systems are stretched (Capacity Strain)',
-  transition: 'A leadership change is coming (Leadership Transition)',
+  expansion: 'Adding a site, city, or major program',
+  funder: 'Going after bigger funding, or a major grant is ending',
+  founder: 'Too much depends on one leader',
+  strain: 'Growing, but staff and systems are stretched',
+  transition: 'A leadership change is coming',
   checkup: 'No specific trigger, a check-up',
 };
 
 const STAGE_LABELS = {
-  build: 'Build (Formation Readiness, $2,000 diagnostic)',
-  fund: 'Fund (Grant Readiness, $2,500 diagnostic)',
-  sustain: 'Sustain (Institutional Durability, $2,500 diagnostic)',
+  build: 'Build: get the foundation right ($2,000 Diagnostic)',
+  fund: 'Fund: get ready for bigger money ($2,500 Diagnostic)',
+  sustain: 'Sustain: make it last beyond one person ($2,500 Diagnostic)',
 };
+// The path a situation usually points to (same rule as the website's check-up).
+const TRIGGER_PATH = { expansion: 'fund', funder: 'fund', strain: 'fund', founder: 'sustain', transition: 'sustain' };
+const PATH_LABELS = { build: 'Build: get the foundation right', fund: 'Fund: get ready for bigger money', sustain: 'Sustain: make it last beyond one person' };
+const cleanText = (v, n) => (typeof v === 'string' ? v.replace(/[\r\n\t]+/g, ' ').trim().slice(0, n) : '');
 
 const TOOL_DISPLAY_NAMES = {
   'self-assessment': 'Sustainability Self-Assessment',
@@ -511,6 +516,21 @@ app.post('/api/admin/retention', async (req, res) => {
   }
 });
 
+/* GET /api/admin/checkup-counts?hours=24: how many free check-ups and   */
+/* other tools were completed (anonymous included) and how many left an  */
+/* email, for the operations app's morning brief. Counts only.           */
+app.get('/api/admin/checkup-counts', async (req, res) => {
+  const secret = process.env.REMINDER_SECRET || '';
+  if (!secret || req.get('X-Reminder-Secret') !== secret) return res.status(401).json({ ok: false });
+  const hours = Math.max(1, Math.min(24 * 14, Number(req.query.hours) || 24));
+  const [done, leads] = await Promise.all([recentResponseCounts(hours), recentLeads(hours)]);
+  if (!done) return res.status(503).json({ ok: false, error: 'database unavailable' });
+  const byTool = {};
+  for (const r of done) byTool[r.tool] = r.n;
+  const completed = done.reduce((a, r) => a + r.n, 0);
+  res.json({ ok: true, hours, completed, checkups: byTool['self-assessment'] || 0, byTool, leftEmail: (leads || []).filter((l) => l.kind === 'tool' || l.kind === 'scorecard').length });
+});
+
 /* GET /api/admin/lead-log?hours=48: lead references for the operations  */
 /* app's daily reconciliation. Same secret as the reminder sender.        */
 app.get('/api/admin/lead-log', async (req, res) => {
@@ -728,8 +748,12 @@ app.post('/api/assessment-lead', async (req, res) => {
   const healthIndex = mapToHealthIndex(tool, body.pillarScores);
   // Opt-in: one 90-day re-check reminder, stored until it's sent.
   const reminderToken = body.remind === true ? await addReminder({ email: String(body.email).trim(), tool, days: 90 }) : null;
+  const pathKey = STAGE_LABELS[body.stage] ? body.stage : (TRIGGER_PATH[body.trigger] || '');
   const payload = {
     email: body.email,
+    name: cleanText(body.name, 80),
+    orgName: cleanText(body.orgName, 120),
+    path: PATH_LABELS[pathKey] || '',
     scorePct: body.scorePct,
     band: body.band,
     pillarScores: body.pillarScores,
@@ -746,8 +770,12 @@ app.post('/api/assessment-lead', async (req, res) => {
 
   const leadRef = 'web-tool-' + crypto.randomUUID();
   const toolNotes = [
+    `Email: ${String(body.email).trim()}`,
+    payload.name && `Name: ${payload.name}`,
     `Tool: ${payload.toolName}`,
     payload.org && `Organization: ${payload.org.name} (EIN ${payload.org.ein}${payload.org.state ? ', ' + payload.org.state : ''})`,
+    !payload.org && payload.orgName && `Organization (as typed): ${payload.orgName}`,
+    payload.path && `Path: ${payload.path}`,
     payload.toolsTaken.length && `Tools taken: ${payload.toolsTaken.join(', ')}`,
     payload.seal && `Candid Seal path: ${payload.seal}`,
     payload.stage && `Stage: ${payload.stage}`,
@@ -757,15 +785,15 @@ app.post('/api/assessment-lead', async (req, res) => {
     formatHealthIndex(healthIndex),
   ].filter(Boolean).join('\n');
   const osAdded = await pushProspect({
-    name: String(body.email).trim(),
-    org: payload.org ? payload.org.name : '',
+    name: payload.name || String(body.email).trim(),
+    org: payload.org ? payload.org.name : payload.orgName,
     source: 'assessment tool',
     notes: toolNotes,
     sourceRef: leadRef,
     // Every tool's results recommend the InstitutionalOS Diagnostic for
     // the visitor's stage, so that's the offer a tool lead is about.
     interest: 'institutionalos-diagnostic',
-    orgStage: STAGE_LABELS[body.stage] ? body.stage : '',
+    orgStage: pathKey,
     trigger: TRIGGER_LABELS[body.trigger] ? body.trigger : '',
     selfScores: selfScoresFrom(healthIndex),
     link: payload.org ? `https://projects.propublica.org/nonprofits/organizations/${payload.org.ein.replace('-', '')}` : '',

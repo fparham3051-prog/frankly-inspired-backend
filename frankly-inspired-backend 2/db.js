@@ -346,6 +346,22 @@ async function logLead({ ref, kind, pushed }) {
   }
 }
 
+// Completed tools by kind in the last N hours (anonymous; counts only).
+async function recentResponseCounts(hours) {
+  if (!pool) return null;
+  try {
+    if (ready) await withTimeout(ready, 6000, 'DB init');
+    const { rows } = await withTimeout(pool.query(
+      "SELECT tool, count(*)::int AS n FROM assessment_responses WHERE created_at > now() - ($1 || ' hours')::interval GROUP BY tool",
+      [String(Math.max(1, Math.min(24 * 14, Number(hours) || 24)))]
+    ), 9000, 'recentResponseCounts');
+    return rows;
+  } catch (err) {
+    console.error('recentResponseCounts failed:', err.message);
+    return null;
+  }
+}
+
 async function recentLeads(hours) {
   if (!pool) return null;
   try {
@@ -403,4 +419,4 @@ async function pageCounts(days) {
   return r.rows;
 }
 
-module.exports = { getContent, setContent, countPage, pageCounts, purgeOld, exportAll, logLead, recentLeads, durabilityRows, addFeedback, logAssessmentResponse, getBenchmarks, KNOWN_TOOLS, countResponses, addReminder, dueReminders, deleteReminder };
+module.exports = { getContent, setContent, countPage, pageCounts, purgeOld, exportAll, logLead, recentLeads, recentResponseCounts, durabilityRows, addFeedback, logAssessmentResponse, getBenchmarks, KNOWN_TOOLS, countResponses, addReminder, dueReminders, deleteReminder };

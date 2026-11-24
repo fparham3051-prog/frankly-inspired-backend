@@ -137,24 +137,31 @@ function assessmentResultsEmail(payload) {
  *  The "Email:", "Composite score:" and "By pillar:" lines are what the daily
  *  Gmail import parses, so keep their wording. */
 function assessmentLeadNotificationEmail(payload, leadRef, osAdded) {
-  const bars = (payload.pillarScores || []).map(p => `${p.label}: ${Math.round(p.pct)}%`).join(' · ');
-  const hi = (payload.healthIndex || []).map(r => `${r.dimension}: ${r.pct}%`).join(' · ');
+  const areas = (payload.pillarScores || []);
+  const bars = areas.map(p => `${p.label}: ${Math.round(p.pct)}%`).join(' · ');
+  const low = areas.length ? areas.reduce((a, b) => (b.pct < a.pct ? b : a)) : null;
+  const row = (k, v) => `<p style="font-family:Arial,sans-serif;font-size:13px;margin:0 0 8px;"><strong>${k}:</strong> ${v}</p>`;
+  const who = payload.name || payload.email;
+  const orgName = payload.org ? payload.org.name : (payload.orgName || '');
+  const pathShort = payload.path ? payload.path.split(':')[0] : '';
   const html = wrapEmail(`
-    <h1 style="font-size:18px;color:${BRAND.navy};margin:0 0 16px;">New self-assessment lead</h1>
-    <p style="font-family:Arial,sans-serif;font-size:13px;"><strong>Email:</strong> ${escapeHtml(payload.email)}</p>
-    ${payload.org ? `<p style="font-family:Arial,sans-serif;font-size:13px;"><strong>Organization:</strong> ${escapeHtml(payload.org.name)} (EIN ${escapeHtml(payload.org.ein)}${payload.org.state ? ', ' + escapeHtml(payload.org.state) : ''}) &middot; <a href="https://projects.propublica.org/nonprofits/organizations/${escapeHtml(payload.org.ein.replace('-', ''))}">990s</a></p>` : ''}
-    ${payload.seal ? `<p style="font-family:Arial,sans-serif;font-size:13px;"><strong>Candid Seal path:</strong> ${escapeHtml(payload.seal)}</p>` : ''}
-    ${payload.toolsTaken && payload.toolsTaken.length ? `<p style="font-family:Arial,sans-serif;font-size:13px;"><strong>Tools taken:</strong> ${escapeHtml(payload.toolsTaken.join(', '))}</p>` : ''}
-    <p style="font-family:Arial,sans-serif;font-size:13px;"><strong>Composite score:</strong> ${Math.round(payload.scorePct)}% (${escapeHtml(payload.band || '')})</p>
-    <p style="font-family:Arial,sans-serif;font-size:13px;"><strong>By pillar:</strong> ${escapeHtml(bars)}</p>
-    <p style="font-family:Arial,sans-serif;font-size:13px;"><strong>Tool:</strong> ${escapeHtml(payload.toolName || 'Sustainability Self-Assessment')}</p>
-    ${payload.stage ? `<p style="font-family:Arial,sans-serif;font-size:13px;"><strong>Stage:</strong> ${escapeHtml(payload.stage)}</p>` : ''}
-    ${payload.trigger ? `<p style="font-family:Arial,sans-serif;font-size:13px;"><strong>Situation:</strong> ${escapeHtml(payload.trigger)}</p>` : ''}
-    ${hi ? `<p style="font-family:Arial,sans-serif;font-size:13px;"><strong>Indicative Health Index (self-reported):</strong> ${escapeHtml(hi)}</p>` : ''}
+    <h1 style="font-size:18px;color:${BRAND.navy};margin:0 0 6px;">New check-up lead</h1>
+    <p style="font-family:Arial,sans-serif;font-size:13px;color:#6b7480;margin:0 0 16px;">Reply within two hours if you can: leads go cold fast.</p>
+    ${payload.name ? row('Name', escapeHtml(payload.name)) : ''}
+    ${row('Email', escapeHtml(payload.email))}
+    ${payload.org ? row('Organization', `${escapeHtml(payload.org.name)} (EIN ${escapeHtml(payload.org.ein)}${payload.org.state ? ', ' + escapeHtml(payload.org.state) : ''}) &middot; <a href="https://projects.propublica.org/nonprofits/organizations/${escapeHtml(payload.org.ein.replace('-', ''))}">990s</a>`) : (payload.orgName ? row('Organization', escapeHtml(payload.orgName)) : '')}
+    ${payload.path ? row('Path', escapeHtml(payload.path)) : ''}
+    ${payload.trigger ? row('What is happening', escapeHtml(payload.trigger)) : ''}
+    ${row('Score', `${Math.round(payload.scorePct)}% (${escapeHtml(payload.band || '')})`)}
+    ${low ? row('Most likely to break first', `${escapeHtml(low.label)} (${Math.round(low.pct)}%)`) : ''}
+    ${row('By area', escapeHtml(bars))}
+    ${payload.tool && payload.tool !== 'self-assessment' ? row('Tool', escapeHtml(payload.toolName || '')) : ''}
+    ${payload.seal ? row('Candid Seal path', escapeHtml(payload.seal)) : ''}
+    ${osAdded ? `<p style="font-family:Arial,sans-serif;font-size:13px;margin:16px 0 0;"><strong>Next:</strong> a first note drafted for you is waiting in your operations app's Outbox. Read it, make it yours, and send.</p>` : ''}
     ${leadRefHtml(leadRef, osAdded)}
   `);
   return {
-    subject: `New assessment lead: ${payload.org ? payload.org.name : payload.email}`,
+    subject: `New check-up lead: ${who}${orgName ? ', ' + orgName : ''}${pathShort ? ' (' + pathShort + ' path)' : ''}`,
     html,
   };
 }
