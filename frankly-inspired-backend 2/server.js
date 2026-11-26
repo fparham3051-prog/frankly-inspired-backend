@@ -35,9 +35,11 @@ const {
   checkinReminderEmail,
   feedbackNotificationEmail,
   feedbackThanksEmail,
+  progressSavedEmail,
+  progressReminderEmail,
 } = require('./emailTemplates');
 const { generateAssessmentNarrative, answerQuestion } = require('./aiNarrative');
-const { getContent, setContent, countPage, pageCounts, purgeOld, exportAll, logLead, recentLeads, recentResponseCounts, durabilityRows, addFeedback, logAssessmentResponse, getBenchmarks, KNOWN_TOOLS, countResponses, addReminder, dueReminders, deleteReminder } = require('./db');
+const { getContent, setContent, countPage, pageCounts, purgeOld, exportAll, logLead, recentLeads, recentResponseCounts, durabilityRows, addFeedback, logAssessmentResponse, getBenchmarks, KNOWN_TOOLS, countResponses, addReminder, dueReminders, deleteReminder, saveProgress, getProgress, updateProgress, endProgress, dueProgress, markProgressReminded, checkupInsights } = require('./db');
 const { makeScoreRef, verifyScoreRef } = require('./scoreRef');
 const { pushFeedback, pushProspect, getGivingLandscape, osConfigured } = require('./osClient');
 const { mapToHealthIndex, formatHealthIndex } = require('./healthIndex');
@@ -171,6 +173,8 @@ const limiter = rateLimit({
 // 5-per-15-minutes budget with them meant a visitor who finished two tools
 // and then tried to email results or contact Franklin could be blocked.
 app.use(['/api/contact', '/api/assessment-lead', '/api/reminders', '/api/subscribe'], limiter);
+// Saving progress emails the visitor, so it shares the strict form budget; later updates to a save don't.
+app.post('/api/checkup-progress', limiter);
 // The results assistant calls the AI model, so it gets its own budget:
 // 10 questions per visitor per 15 minutes.
 app.use('/api/ask', rateLimit({
@@ -545,7 +549,8 @@ app.get('/api/admin/checkup-counts', async (req, res) => {
   const byTool = {};
   for (const r of done) byTool[r.tool] = r.n;
   const completed = done.reduce((a, r) => a + r.n, 0);
-  res.json({ ok: true, hours, completed, checkups: byTool['self-assessment'] || 0, byTool, leftEmail: (leads || []).filter((l) => l.kind === 'tool' || l.kind === 'scorecard').length });
+  const insights = await checkupInsights(hours).catch((e) => { console.error('checkupInsights failed:', e.message); return null; });
+  res.json({ ok: true, hours, completed, checkups: byTool['self-assessment'] || 0, byTool, leftEmail: (leads || []).filter((l) => l.kind === 'tool' || l.kind === 'scorecard').length, ...(insights || {}) });
 });
 
 /* GET /api/admin/lead-log?hours=48: lead references for the operations  */
@@ -747,6 +752,113 @@ app.post('/api/admin/send-checkin-reminders', async (req, res) => {
   res.json({ ok: true, sent, failed });
 });
 
+/* ------------------------------------------------------------------ */
+/* The free check-up's full result, saved anonymously with every       */
+/* finished check-up (through /api/assessment-narrative), and saved     */
+/* progress for visitors who want a link to finish later.               */
+/* ------------------------------------------------------------------ */
+const CHECKUP_REF = /^[A-Za-z0-9-]{8,64}$/;
+const LEGACY_KEYS = ['deputy', 'decisions', 'succession', 'reserves', 'concentration', 'candid'];
+function checkupResult(b) {
+  const out = {};
+  if (CHECKUP_REF.test(String(b.ref || ''))) out.ref = String(b.ref);
+  if (['build', 'fund', 'sustain'].includes(b.path)) out.path = b.path;
+  const sa = b.stageAnswers;
+  if (sa && typeof sa === 'object') {
+    const clean = {};
+    for (const k of ['budget', 'staff', 'years', 'decide']) if (Number.isInteger(sa[k]) && sa[k] >= -1 && sa[k] <= 9) clean[k] = sa[k];
+    if (Object.keys(clean).length) out.stageAnswers = clean;
+  }
+  if (typeof b.gap === 'string' && b.gap.trim()) out.gap = cleanText(b.gap, 80);
+  const lg = b.legacy;
+  if (lg && Array.isArray(lg.markers)) {
+    const markers = lg.markers.filter((k) => LEGACY_KEYS.includes(k));
+    out.legacy = { met: markers.length, markers };
+  }
+  return out;
+}
+const SITE_URL = (process.env.PUBLIC_SITE_URL || 'https://franklyinspired.associates').replace(/\/+$/, '');
+const PROGRESS_TOKEN = /^[A-Za-z0-9_-]{16,64}$/;
+const progressLinks = (token) => ({
+  resumeUrl: `${SITE_URL}/assessment?resume=${token}`,
+  stopUrl: `${PUBLIC_API}/api/checkup-progress/${token}/stop`,
+});
+// Answers only: field names and short values, so a save can't carry anything else.
+function cleanFields(f) {
+  if (!f || typeof f !== 'object' || Array.isArray(f)) return null;
+  const out = {};
+  for (const [k, v] of Object.entries(f).slice(0, 200)) {
+    if (!/^[A-Za-z0-9_:-]{1,60}$/.test(k)) continue;
+    if (typeof v === 'string') out[k] = v.slice(0, 500);
+    else if (typeof v === 'boolean') out[k] = v;
+  }
+  return out;
+}
+const count = (n, max) => Math.max(0, Math.min(max, Math.round(Number(n) || 0)));
+app.post('/api/checkup-progress', async (req, res) => {
+  const b = req.body || {};
+  if (b.hp_field) return res.json({ ok: true });
+  if (!isValidEmail(b.email)) return res.status(400).json({ ok: false, error: 'Please enter a valid email address.' });
+  const fields = cleanFields(b.fields);
+  if (!fields) return res.status(400).json({ ok: false, error: 'Nothing to save yet.' });
+  const total = count(b.total, 200), answered = Math.min(total, count(b.answered, 200));
+  let token;
+  try { token = await saveProgress({ email: String(b.email).trim(), fields, answered, total }); } catch (e) { console.error('saveProgress failed:', e.message); }
+  if (!token) return res.status(503).json({ ok: false, error: 'Saving is unavailable right now. Please try again shortly.' });
+  const links = progressLinks(token);
+  const mail = progressSavedEmail({ ...links, answered, total });
+  const out = await resend.emails.send({ from: FROM_EMAIL, to: String(b.email).trim(), replyTo: TO_EMAIL || undefined, subject: mail.subject, html: mail.html }).catch((e) => ({ error: e }));
+  if (out && out.error) console.error('progress saved email failed:', out.error);
+  res.json({ ok: true, token, resumeUrl: links.resumeUrl, emailed: !(out && out.error) });
+});
+app.get('/api/checkup-progress/:token', async (req, res) => {
+  const t = String(req.params.token || '');
+  if (!PROGRESS_TOKEN.test(t)) return res.status(404).json({ ok: false });
+  const row = await getProgress(t).catch(() => null);
+  if (!row) return res.status(404).json({ ok: false, error: 'This link has already been used or stopped.' });
+  res.json({ ok: true, fields: row.fields || {}, answered: row.answered, total: row.total });
+});
+app.post('/api/checkup-progress/:token', async (req, res) => {
+  const t = String(req.params.token || '');
+  const fields = cleanFields((req.body || {}).fields);
+  if (!PROGRESS_TOKEN.test(t) || !fields) return res.status(400).json({ ok: false });
+  const total = count(req.body.total, 200), answered = Math.min(total, count(req.body.answered, 200));
+  const ok = await updateProgress(t, { fields, answered, total }).catch(() => false);
+  res.status(ok ? 200 : 404).json({ ok });
+});
+app.post('/api/checkup-progress/:token/complete', async (req, res) => {
+  const t = String(req.params.token || '');
+  if (!PROGRESS_TOKEN.test(t)) return res.status(400).json({ ok: false });
+  const ref = CHECKUP_REF.test(String((req.body || {}).ref || '')) ? String(req.body.ref) : null;
+  const ok = await endProgress(t, { completed: true, ref }).catch(() => false);
+  res.json({ ok });
+});
+app.get('/api/checkup-progress/:token/stop', async (req, res) => {
+  const t = String(req.params.token || '');
+  const done = PROGRESS_TOKEN.test(t) ? await endProgress(t, { completed: false }).catch(() => false) : false;
+  res.type('html').send(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Reminders stopped</title><body style="font-family:Arial,sans-serif;max-width:520px;margin:60px auto;padding:0 16px;color:#1f2933"><h1 style="font-size:20px;color:#0f1f3d">${done ? 'Reminders stopped' : 'Nothing to stop'}</h1><p>${done ? 'You won\'t get any more reminders about your check-up, and your saved answers and email address have been deleted.' : 'This check-up was already finished or its reminders were already stopped.'}</p><p><a href="${SITE_URL}/assessment">Start the free check-up again</a></p></body>`);
+});
+/* POST /api/admin/send-progress-reminders: weekly "finish your check-up" */
+/* emails, a day after saving and then every seven days, until the visitor */
+/* finishes or stops them. Run daily by the operations app's reminder task. */
+app.post('/api/admin/send-progress-reminders', async (req, res) => {
+  if (!REMINDER_SECRET || req.get('X-Reminder-Secret') !== REMINDER_SECRET) return res.status(401).json({ ok: false });
+  let sent = 0, failed = 0;
+  try {
+    for (const r of await dueProgress(50)) {
+      const mail = progressReminderEmail({ ...progressLinks(r.token), answered: r.answered, total: r.total });
+      const out = await resend.emails.send({ from: FROM_EMAIL, to: r.email, replyTo: TO_EMAIL || undefined, subject: mail.subject, html: mail.html }).catch((e) => ({ error: e }));
+      if (out && out.error) { failed++; console.error('progress reminder failed:', out.error); continue; }
+      await markProgressReminded(r.id);
+      sent++;
+    }
+  } catch (err) {
+    console.error('send-progress-reminders failed:', err.message);
+    return res.status(500).json({ ok: false, sent, failed });
+  }
+  res.json({ ok: true, sent, failed });
+});
+
 app.post('/api/assessment-lead', async (req, res) => {
   const body = req.body || {};
  
@@ -803,6 +915,7 @@ app.post('/api/assessment-lead', async (req, res) => {
     payload.seal && `Candid Seal path: ${payload.seal}`,
     payload.stage && `Stage: ${payload.stage}`,
     payload.trigger && `Situation: ${payload.trigger}`,
+    CHECKUP_REF.test(String(body.checkupRef || '')) && `Check-up reference: ${body.checkupRef}`,
     `Composite score: ${Math.round(payload.scorePct)}%${payload.band ? ' (' + payload.band + ')' : ''}`,
     'By area: ' + payload.pillarScores.map(p => `${p.label} ${Math.round(p.pct)}%`).join(', '),
     formatHealthIndex(healthIndex),
@@ -895,6 +1008,7 @@ app.post('/api/assessment-narrative', async (req, res) => {
     pillarScores: body.pillarScores,
     scale,
     trigger: body.trigger,
+    ...checkupResult(body),
   });
  
   // Signed score_ref token, same mechanism the InstitutionalOS scorecard
