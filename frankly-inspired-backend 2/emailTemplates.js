@@ -152,8 +152,10 @@ function assessmentLeadNotificationEmail(payload, leadRef, osAdded) {
     ${payload.org ? row('Organization', `${escapeHtml(payload.org.name)} (EIN ${escapeHtml(payload.org.ein)}${payload.org.state ? ', ' + escapeHtml(payload.org.state) : ''}) &middot; <a href="https://projects.propublica.org/nonprofits/organizations/${escapeHtml(payload.org.ein.replace('-', ''))}">990s</a>`) : (payload.orgName ? row('Organization', escapeHtml(payload.orgName)) : '')}
     ${payload.path ? row('Path', escapeHtml(payload.path)) : ''}
     ${payload.trigger ? row('What is happening', escapeHtml(payload.trigger)) : ''}
+    ${payload.stageFacts ? row('Stage', escapeHtml(payload.stageFacts)) : ''}
     ${row('Score', `${Math.round(payload.scorePct)}% (${escapeHtml(payload.band || '')})`)}
-    ${low ? row('Most likely to break first', `${escapeHtml(low.label)} (${Math.round(low.pct)}%)`) : ''}
+    ${payload.gap ? row('Most likely to break first', escapeHtml(payload.gap) + (areas.find((p) => p.label === payload.gap) ? ` (${Math.round(areas.find((p) => p.label === payload.gap).pct)}%)` : '')) : (low ? row('Most likely to break first', `${escapeHtml(low.label)} (${Math.round(low.pct)}%)`) : '')}
+    ${payload.legacy ? row('Legacy Readiness', `${payload.legacy.met} of 6${payload.legacy.missing.length ? ' &middot; missing: ' + escapeHtml(payload.legacy.missing.join('; ')) : ''}`) : ''}
     ${row('By area', escapeHtml(bars))}
     ${payload.tool && payload.tool !== 'self-assessment' ? row('Tool', escapeHtml(payload.toolName || '')) : ''}
     ${payload.seal ? row('Candid Seal path', escapeHtml(payload.seal)) : ''}
