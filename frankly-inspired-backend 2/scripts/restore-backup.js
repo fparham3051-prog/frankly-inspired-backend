@@ -19,7 +19,9 @@ const { Pool } = require("pg");
     console.error("Usage: DATABASE_URL=... node scripts/restore-backup.js backup.json [operations|website] [--replace]");
     process.exit(1);
   }
-  const bundle = JSON.parse(fs.readFileSync(file, "utf8"));
+  const raw = fs.readFileSync(file);
+  // The nightly backups in Google Drive are gzip-compressed (*.json.gz): they start with the gzip magic bytes.
+  const bundle = JSON.parse((raw[0] === 0x1f && raw[1] === 0x8b ? require("zlib").gunzipSync(raw) : raw).toString("utf8"));
   const data = bundle[section] || (bundle.tables ? bundle : null);
   if (!data || !data.tables) { console.error(`No "${section}" section in ${file}`); process.exit(1); }
   const ssl = /localhost|127\.0\.0\.1/.test(process.env.DATABASE_URL) ? false : { rejectUnauthorized: false };
