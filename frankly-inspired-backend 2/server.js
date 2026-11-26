@@ -108,6 +108,23 @@ const STAGE_LABELS = {
 // The path a situation usually points to (same rule as the website's check-up).
 const TRIGGER_PATH = { expansion: 'fund', funder: 'fund', strain: 'fund', founder: 'sustain', transition: 'sustain' };
 const PATH_LABELS = { build: 'Build: get the foundation right', fund: 'Fund: get ready for bigger money', sustain: 'Sustain: make it last beyond one person' };
+// Idea to Legacy (Nov 2026): the check-up's stage questions and Legacy Readiness.
+const STAGE_OPTS = {
+  budget: ['under $250K', '$250K to $1M', '$1M to $5M', 'over $5M'],
+  staff: ['0-2 staff', '3-10 staff', '11-40 staff', '40+ staff'],
+  years: ['under 3 years', '3-7 years', '8-15 years', '15+ years'],
+  decide: ['founder/ED decides alone', 'ED plus one or two others', 'leadership team with written roles'],
+};
+function stageFacts(sa) {
+  if (!sa || typeof sa !== 'object') return '';
+  return Object.keys(STAGE_OPTS).map((k) => STAGE_OPTS[k][Number(sa[k])]).filter(Boolean).join(', ');
+}
+function cleanLegacy(l) {
+  if (!l || typeof l !== 'object') return null;
+  const met = Math.max(0, Math.min(6, Number(l.met) || 0));
+  const missing = Array.isArray(l.missing) ? l.missing.slice(0, 6).map((m) => cleanText(String(m), 60)).filter(Boolean) : [];
+  return { met, total: 6, missing };
+}
 const cleanText = (v, n) => (typeof v === 'string' ? v.replace(/[\r\n\t]+/g, ' ').trim().slice(0, n) : '');
 
 const TOOL_DISPLAY_NAMES = {
@@ -754,6 +771,9 @@ app.post('/api/assessment-lead', async (req, res) => {
     name: cleanText(body.name, 80),
     orgName: cleanText(body.orgName, 120),
     path: PATH_LABELS[pathKey] || '',
+    stageFacts: stageFacts(body.stageAnswers),
+    gap: cleanText(body.gap, 80),
+    legacy: cleanLegacy(body.legacy),
     scorePct: body.scorePct,
     band: body.band,
     pillarScores: body.pillarScores,
@@ -776,6 +796,9 @@ app.post('/api/assessment-lead', async (req, res) => {
     payload.org && `Organization: ${payload.org.name} (EIN ${payload.org.ein}${payload.org.state ? ', ' + payload.org.state : ''})`,
     !payload.org && payload.orgName && `Organization (as typed): ${payload.orgName}`,
     payload.path && `Path: ${payload.path}`,
+    payload.stageFacts && `Stage facts: ${payload.stageFacts}`,
+    payload.gap && `Gap that will break first (check-up rule): ${payload.gap}`,
+    payload.legacy && `Legacy Readiness: ${payload.legacy.met} of ${payload.legacy.total}${payload.legacy.missing.length ? ' (missing: ' + payload.legacy.missing.join('; ') + ')' : ''}`,
     payload.toolsTaken.length && `Tools taken: ${payload.toolsTaken.join(', ')}`,
     payload.seal && `Candid Seal path: ${payload.seal}`,
     payload.stage && `Stage: ${payload.stage}`,
