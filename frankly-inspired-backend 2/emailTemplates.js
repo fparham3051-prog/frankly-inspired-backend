@@ -305,7 +305,42 @@ function feedbackThanksEmail(f) {
   return { subject: 'Thank you for your feedback', html };
 }
 
+/** Saved check-up progress: the link to finish, sent right away, and the
+ * weekly reminder (sent until the visitor finishes or presses stop). */
+function progressButton(url, label) {
+  return `<p style="margin:24px 0;"><a href="${url}" style="background:${BRAND.gold};color:${BRAND.navy};text-decoration:none;padding:12px 24px;border-radius:4px;font-family:Arial,sans-serif;font-weight:bold;font-size:14px;display:inline-block;">${label}</a></p>`;
+}
+function progressFooter(stopUrl) {
+  return `<p style="margin-top:28px;">In partnership,<br>Franklin D. Parham<br>Founder and Principal<br>Frankly Inspired and Associates, LLC</p>
+    <p style="font-family:Arial,sans-serif;font-size:11px;color:#6b7480;margin-top:24px;">You saved your progress on the free check-up, so a reminder comes once a week until you finish. Reminders stop the moment you finish, or <a href="${stopUrl}" style="color:#6b7480;">stop them now</a>; your address and saved answers are then deleted. No mailing list.</p>`;
+}
+function progressSavedEmail({ resumeUrl, stopUrl, answered, total }) {
+  const left = Math.max(0, (total || 0) - (answered || 0));
+  const html = wrapEmail(`
+    <h1 style="font-size:20px;color:${BRAND.navy};margin:0 0 20px;">Your check-up is saved</h1>
+    <p>You've answered ${answered} of ${total} questions. ${left ? `About ${Math.max(1, Math.round(left * 0.25))} minute${Math.round(left * 0.25) > 1 ? 's' : ''} to go.` : ''}</p>
+    <p>This link opens the check-up right where you left off, on any device:</p>
+    ${progressButton(resumeUrl, 'Finish my check-up')}
+    <p>When you finish, you'll see where your organization is on the path from idea to legacy, the gap that will break first, and a first step for the next 90 days.</p>
+    ${progressFooter(stopUrl)}
+  `);
+  return { subject: 'Your free check-up is saved', html };
+}
+function progressReminderEmail({ resumeUrl, stopUrl, answered, total }) {
+  const left = Math.max(0, (total || 0) - (answered || 0));
+  const html = wrapEmail(`
+    <h1 style="font-size:20px;color:${BRAND.navy};margin:0 0 20px;">${left} question${left === 1 ? '' : 's'} left on your check-up</h1>
+    <p>You've answered ${answered} of ${total}. Your answers are saved, so you can pick up right where you left off.</p>
+    ${progressButton(resumeUrl, 'Finish my check-up')}
+    <p>The last few questions are what show the gap that will break first, and whether your organization could run without its founder.</p>
+    ${progressFooter(stopUrl)}
+  `);
+  return { subject: `${left} question${left === 1 ? '' : 's'} left on your free check-up`, html };
+}
+
 module.exports = {
+  progressSavedEmail,
+  progressReminderEmail,
   feedbackNotificationEmail,
   feedbackThanksEmail,
   recheckReminderEmail,

@@ -84,6 +84,35 @@ if (DATABASE_URL) {
     -- happening right now?"): expansion, funder, founder, strain,
     -- transition, or checkup. NULL when skipped. Feeds the problem rate.
     ALTER TABLE assessment_responses ADD COLUMN IF NOT EXISTS trigger_key TEXT;
+    -- Idea to Legacy results for every finished check-up (Nov 2026), still
+    -- anonymous: a random reference (carried into the lead if the visitor
+    -- later leaves an email), the measured path, the stage answers, the gap
+    -- that will break first, and which Legacy markers are met.
+    ALTER TABLE assessment_responses ADD COLUMN IF NOT EXISTS ref TEXT;
+    ALTER TABLE assessment_responses ADD COLUMN IF NOT EXISTS path TEXT;
+    ALTER TABLE assessment_responses ADD COLUMN IF NOT EXISTS stage_answers JSONB;
+    ALTER TABLE assessment_responses ADD COLUMN IF NOT EXISTS gap TEXT;
+    ALTER TABLE assessment_responses ADD COLUMN IF NOT EXISTS legacy_met INTEGER;
+    ALTER TABLE assessment_responses ADD COLUMN IF NOT EXISTS legacy_markers JSONB;
+    -- Check-ups saved part-way with an email ("save my progress"). The
+    -- answers and the address are kept only until the visitor finishes or
+    -- presses stop; then both are cleared and only the dates remain.
+    -- Reminders go weekly until then (first one a day after saving).
+    CREATE TABLE IF NOT EXISTS checkup_progress (
+      id SERIAL PRIMARY KEY,
+      token TEXT NOT NULL UNIQUE,
+      email TEXT,
+      fields JSONB,
+      answered INTEGER NOT NULL DEFAULT 0,
+      total INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      reminders_sent INTEGER NOT NULL DEFAULT 0,
+      last_reminded_at TIMESTAMPTZ,
+      completed_at TIMESTAMPTZ,
+      stopped_at TIMESTAMPTZ,
+      result_ref TEXT
+    );
     -- Opt-in 90-day re-check reminders. One row per request; the row (and
     -- with it the email address) is deleted as soon as the reminder is sent
     -- or cancelled. Nothing else is ever sent to these addresses.
@@ -164,15 +193,17 @@ function withTimeout(promise, ms, label) {
  */
 const TRIGGER_KEYS = ['expansion', 'funder', 'founder', 'strain', 'transition', 'checkup'];
 
-async function logAssessmentResponse({ tool, scorePct, band, pillarScores, scale, trigger }) {
+async function logAssessmentResponse({ tool, scorePct, band, pillarScores, scale, trigger, ref, path, stageAnswers, gap, legacy }) {
   if (!pool) return;
   const safeTool = KNOWN_TOOLS.includes(tool) ? tool : 'self-assessment';
   try {
     if (ready) await withTimeout(ready, 6000, 'DB init');
     await withTimeout(
       pool.query(
-        'INSERT INTO assessment_responses (tool, score_pct, band, pillar_scores, scale, trigger_key) VALUES ($1, $2, $3, $4, $5, $6)',
-        [safeTool, scorePct, band || null, JSON.stringify(pillarScores), scale === 'evidence' ? 'evidence' : 'agreement', TRIGGER_KEYS.includes(trigger) ? trigger : null]
+        'INSERT INTO assessment_responses (tool, score_pct, band, pillar_scores, scale, trigger_key, ref, path, stage_answers, gap, legacy_met, legacy_markers) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)',
+        [safeTool, scorePct, band || null, JSON.stringify(pillarScores), scale === 'evidence' ? 'evidence' : 'agreement', TRIGGER_KEYS.includes(trigger) ? trigger : null,
+          ref || null, path || null, stageAnswers ? JSON.stringify(stageAnswers) : null, gap || null,
+          legacy ? legacy.met : null, legacy ? JSON.stringify(legacy.markers) : null]
       ),
       6000,
       'insert assessment response'
@@ -419,4 +450,73 @@ async function pageCounts(days) {
   return r.rows;
 }
 
-module.exports = { getContent, setContent, countPage, pageCounts, purgeOld, exportAll, logLead, recentLeads, recentResponseCounts, durabilityRows, addFeedback, logAssessmentResponse, getBenchmarks, KNOWN_TOOLS, countResponses, addReminder, dueReminders, deleteReminder };
+// ---------- saved check-up progress ----------
+const PROGRESS_ACTIVE = 'completed_at IS NULL AND stopped_at IS NULL AND email IS NOT NULL';
+async function saveProgress({ email, fields, answered, total }) {
+  if (!pool) return null;
+  await ready;
+  const token = require('crypto').randomBytes(18).toString('base64url');
+  // One active save per address: a new save replaces the older one, so nobody gets two sets of reminders.
+  await pool.query(`UPDATE checkup_progress SET stopped_at = now(), email = NULL, fields = NULL WHERE lower(email) = lower($1) AND ${PROGRESS_ACTIVE}`, [email]);
+  await pool.query('INSERT INTO checkup_progress (token, email, fields, answered, total) VALUES ($1, $2, $3, $4, $5)', [token, email, JSON.stringify(fields), answered, total]);
+  return token;
+}
+async function getProgress(token) {
+  if (!pool) return null;
+  await ready;
+  const { rows } = await pool.query(`SELECT id, email, fields, answered, total, created_at, reminders_sent FROM checkup_progress WHERE token = $1 AND ${PROGRESS_ACTIVE}`, [token]);
+  return rows[0] || null;
+}
+async function updateProgress(token, { fields, answered, total }) {
+  if (!pool) return false;
+  await ready;
+  const r = await pool.query(`UPDATE checkup_progress SET fields = $2, answered = $3, total = $4, updated_at = now() WHERE token = $1 AND ${PROGRESS_ACTIVE}`, [token, JSON.stringify(fields), answered, total]);
+  return r.rowCount > 0;
+}
+// Finished or stopped: the address and the answers are cleared at once.
+async function endProgress(token, { completed, ref }) {
+  if (!pool) return false;
+  await ready;
+  const r = await pool.query(`UPDATE checkup_progress SET ${completed ? 'completed_at' : 'stopped_at'} = now(), result_ref = COALESCE($2, result_ref), email = NULL, fields = NULL WHERE token = $1 AND completed_at IS NULL AND stopped_at IS NULL`, [token, ref || null]);
+  return r.rowCount > 0;
+}
+// Due: a day after saving for the first reminder, then every seven days.
+async function dueProgress(limit = 50) {
+  if (!pool) return [];
+  await ready;
+  const { rows } = await pool.query(`SELECT id, token, email, answered, total, created_at, reminders_sent FROM checkup_progress
+    WHERE ${PROGRESS_ACTIVE} AND ((last_reminded_at IS NULL AND created_at <= now() - interval '1 day') OR last_reminded_at <= now() - interval '7 days')
+    ORDER BY created_at LIMIT $1`, [limit]);
+  return rows;
+}
+async function markProgressReminded(id) {
+  if (!pool) return;
+  await pool.query('UPDATE checkup_progress SET reminders_sent = reminders_sent + 1, last_reminded_at = now() WHERE id = $1', [id]);
+}
+// For the morning brief: what finished check-ups showed, and saved progress.
+async function checkupInsights(hours) {
+  if (!pool) return null;
+  await ready;
+  const h = String(Math.max(1, Math.min(24 * 400, Number(hours) || 24)));
+  const q = async (sql) => (await withTimeout(pool.query(sql, [h]), 9000, 'checkupInsights')).rows;
+  const win = "created_at > now() - ($1 || ' hours')::interval";
+  const [paths, gaps, legacy, prog] = await Promise.all([
+    q(`SELECT COALESCE(path, 'unknown') AS k, count(*)::int AS n FROM assessment_responses WHERE tool = 'self-assessment' AND ${win} GROUP BY 1`),
+    q(`SELECT gap AS k, count(*)::int AS n FROM assessment_responses WHERE tool = 'self-assessment' AND gap IS NOT NULL AND ${win} GROUP BY 1 ORDER BY 2 DESC`),
+    q(`SELECT avg(legacy_met)::float AS avg, count(legacy_met)::int AS n FROM assessment_responses WHERE tool = 'self-assessment' AND ${win}`),
+    q(`SELECT
+         count(*) FILTER (WHERE ${PROGRESS_ACTIVE})::int AS in_progress,
+         count(*) FILTER (WHERE ${win})::int AS saved,
+         count(*) FILTER (WHERE completed_at > now() - ($1 || ' hours')::interval)::int AS finished_after_saving,
+         count(*) FILTER (WHERE last_reminded_at > now() - ($1 || ' hours')::interval)::int AS reminded
+       FROM checkup_progress`),
+  ]);
+  const byPath = Object.fromEntries(paths.map((r) => [r.k, r.n]));
+  return {
+    byPath, gaps: gaps.map((r) => ({ gap: r.k, n: r.n })),
+    legacyAvg: legacy[0] && legacy[0].n ? Math.round(legacy[0].avg * 10) / 10 : null,
+    progress: { inProgress: prog[0].in_progress, saved: prog[0].saved, finishedAfterSaving: prog[0].finished_after_saving, reminded: prog[0].reminded },
+  };
+}
+
+module.exports = { saveProgress, getProgress, updateProgress, endProgress, dueProgress, markProgressReminded, checkupInsights, getContent, setContent, countPage, pageCounts, purgeOld, exportAll, logLead, recentLeads, recentResponseCounts, durabilityRows, addFeedback, logAssessmentResponse, getBenchmarks, KNOWN_TOOLS, countResponses, addReminder, dueReminders, deleteReminder };
