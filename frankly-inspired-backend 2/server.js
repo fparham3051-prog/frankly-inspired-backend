@@ -990,7 +990,9 @@ app.post('/api/assessment-narrative', async (req, res) => {
   const tool = KNOWN_TOOLS.includes(body.tool) ? body.tool : 'self-assessment';
  
   const scale = body.scale === 'evidence' ? 'evidence' : 'agreement';
-  const narrative = await generateAssessmentNarrative({
+  // narrative: false = the page shows only Franklin's own results text, so
+  // don't draft an AI summary (the free check-up sends this).
+  const narrative = body.narrative === false ? null : await generateAssessmentNarrative({
     tool,
     scorePct: body.scorePct,
     band: typeof body.band === 'string' ? body.band : '',
