@@ -100,3 +100,16 @@ Franklin, using this service's mail setup. It is server-to-server only and
 requires `SCORECARD_MAIL_SECRET` (the same value set on grantpass-backend)
 in an `X-Scorecard-Secret` header. Not rate-limited, since every call comes
 from the scorecard's one address.
+
+## Text alerts (optional)
+
+New contact forms, finished check-ups that leave an email, InstitutionalOS scorecard leads and client feedback can also text Franklin's phone through Twilio. Texts are off until all four of these are set on Render (`/api/health` shows `"textAlerts": true` once they are):
+
+| Variable | What it is |
+| --- | --- |
+| `TWILIO_ACCOUNT_SID` | Account SID from the Twilio console |
+| `TWILIO_AUTH_TOKEN` | Auth token from the Twilio console |
+| `TWILIO_FROM` | The Twilio number that sends, in +1XXXXXXXXXX form (or set `TWILIO_MESSAGING_SERVICE_SID` instead) |
+| `ALERT_SMS_TO` | The phone number(s) to text, comma-separated, in +1XXXXXXXXXX form |
+
+A text says who and what kind of lead it is; scores and answers stay in the email. A failed text is logged and never blocks a form.
