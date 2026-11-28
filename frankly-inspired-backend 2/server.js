@@ -45,6 +45,7 @@ const { pushFeedback, pushProspect, getGivingLandscape, osConfigured } = require
 const { mapToHealthIndex, formatHealthIndex } = require('./healthIndex');
 const { searchOrgs, orgSnapshot, fmtEin } = require('./org990');
 const crypto = require('crypto');
+const { textLead, smsConfigured } = require('./sms');
  
 const PORT = process.env.PORT || 3000;
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
@@ -202,7 +203,7 @@ app.use('/api/', rateLimit({
 }));
  
 app.get('/api/health', (req, res) => {
-  res.json({ ok: true, service: 'frankly-inspired-backend' });
+  res.json({ ok: true, service: 'frankly-inspired-backend', textAlerts: smsConfigured() });
 });
  
 /* ------------------------------------------------------------------ */
@@ -286,6 +287,7 @@ app.post('/api/contact', async (req, res) => {
     trigger: TRIGGER_LABELS[body.trigger] ? body.trigger : '',
   });
   logLead({ ref: leadRef, kind: 'contact', pushed: osAdded });
+  textLead({ kind: 'New contact form', name: fields.name, org: fields.organization, detail: fields.timeline ? `Timeline: ${fields.timeline}.` : '' });
 
   try {
     const ack = contactAcknowledgementEmail(fields);
@@ -451,6 +453,7 @@ app.post('/api/feedback', async (req, res) => {
   const id = await addFeedback(f);
   const fbRef = 'feedback-' + (id || Date.now());
   pushFeedback(f, fbRef).then((ok) => logLead({ ref: fbRef, kind: 'feedback', pushed: ok }));
+  textLead({ kind: 'Client feedback', name: f.name, org: f.organization, detail: f.rating != null ? `Rating ${f.rating} of 10.` : '' });
   try {
     const note = feedbackNotificationEmail(f, id);
     const thanks = feedbackThanksEmail(f);
@@ -947,6 +950,7 @@ app.post('/api/assessment-lead', async (req, res) => {
     link: payload.org ? `https://projects.propublica.org/nonprofits/organizations/${payload.org.ein.replace('-', '')}` : '',
   });
   logLead({ ref: leadRef, kind: 'tool', pushed: osAdded });
+  textLead({ kind: 'Check-up finished', name: payload.name || String(body.email).trim(), org: payload.org ? payload.org.name : payload.orgName, detail: [payload.path && `${payload.path} path`, payload.gap && `gap: ${payload.gap}`, payload.recommendation && `shown: ${payload.recommendation}`].filter(Boolean).join(', ') });
 
   try {
     const results = assessmentResultsEmail(payload);
@@ -1093,6 +1097,7 @@ app.post('/api/scorecard-results', async (req, res) => {
   const leadRef = typeof body.leadRef === 'string' ? body.leadRef.slice(0, 80) : '';
   const osAdded = body.osAdded === true;
   if (leadRef) logLead({ ref: leadRef, kind: 'scorecard', pushed: osAdded });
+  textLead({ kind: 'InstitutionalOS scorecard lead', name: String(body.email || '').trim(), org: r.orgName, detail: r.stageName ? `${r.stageName}, ${Math.round(Number(r.overall) || 0)}/100.` : '' });
 
   try {
     const results = scorecardResultsEmail(r);
