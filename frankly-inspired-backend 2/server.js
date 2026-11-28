@@ -102,6 +102,12 @@ const TRIGGER_LABELS = {
   checkup: 'No specific trigger, a check-up',
 };
 
+const REC_LABELS = {
+  diagnostic: 'Diagnostic',
+  debrief: 'Free debrief call',
+  self: 'Free 90-day step, re-check in 90 days',
+};
+
 const STAGE_LABELS = {
   build: 'Build: get the foundation right ($2,000 Diagnostic)',
   fund: 'Fund: get ready for bigger money ($2,500 Diagnostic)',
@@ -886,6 +892,10 @@ app.post('/api/assessment-lead', async (req, res) => {
     stageFacts: stageFacts(body.stageAnswers),
     gap: cleanText(body.gap, 80),
     legacy: cleanLegacy(body.legacy),
+    // What their results page told them: the short answer to their own
+    // question, and the one recommendation (website situation.ts).
+    answer: cleanText(body.answer, 400),
+    recommendation: REC_LABELS[body.recommendation] || '',
     scorePct: body.scorePct,
     band: body.band,
     pillarScores: body.pillarScores,
@@ -915,6 +925,8 @@ app.post('/api/assessment-lead', async (req, res) => {
     payload.seal && `Candid Seal path: ${payload.seal}`,
     payload.stage && `Stage: ${payload.stage}`,
     payload.trigger && `Situation: ${payload.trigger}`,
+    payload.answer && `Short answer shown: ${payload.answer}`,
+    payload.recommendation && `Recommendation shown: ${payload.recommendation}`,
     CHECKUP_REF.test(String(body.checkupRef || '')) && `Check-up reference: ${body.checkupRef}`,
     `Composite score: ${Math.round(payload.scorePct)}%${payload.band ? ' (' + payload.band + ')' : ''}`,
     'By area: ' + payload.pillarScores.map(p => `${p.label} ${Math.round(p.pct)}%`).join(', '),

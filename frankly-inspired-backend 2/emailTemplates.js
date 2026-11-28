@@ -155,6 +155,8 @@ function assessmentLeadNotificationEmail(payload, leadRef, osAdded) {
     ${payload.stageFacts ? row('Stage', escapeHtml(payload.stageFacts)) : ''}
     ${row('Score', `${Math.round(payload.scorePct)}% (${escapeHtml(payload.band || '')})`)}
     ${payload.gap ? row('Most likely to break first', escapeHtml(payload.gap) + (areas.find((p) => p.label === payload.gap) ? ` (${Math.round(areas.find((p) => p.label === payload.gap).pct)}%)` : '')) : (low ? row('Most likely to break first', `${escapeHtml(low.label)} (${Math.round(low.pct)}%)`) : '')}
+    ${payload.answer ? row('What their results told them', escapeHtml(payload.answer)) : ''}
+    ${payload.recommendation ? row('Recommendation shown', escapeHtml(payload.recommendation)) : ''}
     ${payload.legacy ? row('Legacy Readiness', `${payload.legacy.met} of 6${payload.legacy.missing.length ? ' &middot; missing: ' + escapeHtml(payload.legacy.missing.join('; ')) : ''}`) : ''}
     ${row('By area', escapeHtml(bars))}
     ${payload.tool && payload.tool !== 'self-assessment' ? row('Tool', escapeHtml(payload.toolName || '')) : ''}
